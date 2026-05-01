@@ -7,7 +7,6 @@
   import SearchHeader from "./components/SearchHeader.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import {
-    POSTS_PER_PAGE,
     downloadFile,
     favoritePost,
     fetchPreview,
@@ -41,6 +40,24 @@
   let page = $state(1);
   let hasNextPage = $state(false);
 
+  // Mirrors PostGrid CSS: p-3 (12px), gap-2 (8px), minmax(176px,1fr), h-16 metadata strip (64px).
+  function computePageSize(): number {
+    const grid = document.querySelector<HTMLElement>("[data-grid-scroll]");
+    if (!grid) return 64;
+    const padding = 12;
+    const gap = 8;
+    const tileMin = 176;
+    const metaH = 64;
+    const w = grid.clientWidth - 2 * padding;
+    const h = grid.clientHeight - 2 * padding;
+    if (w <= 0 || h <= 0) return 64;
+    const cols = Math.max(1, Math.floor((w + gap) / (tileMin + gap)));
+    const tileW = (w - gap * (cols - 1)) / cols;
+    const tileH = tileW + metaH;
+    const rows = Math.max(1, Math.floor((h + gap) / (tileH + gap)));
+    return Math.min(320, Math.max(8, cols * rows));
+  }
+
   let username = $state<string | null>(null);
   let showAccount = $state(false);
   let usernameInput = $state("");
@@ -63,12 +80,12 @@
   onMount(() => {
     void loadAccount();
     window.addEventListener("keydown", onWindowKeydown);
-    window.addEventListener("popstate", onBackNavigation);
-    window.addEventListener("mouseup", onMouseBackButton);
+    window.addEventListener("popstate", onPopState);
+    window.addEventListener("mouseup", onMouseNavButton);
     return () => {
       window.removeEventListener("keydown", onWindowKeydown);
-      window.removeEventListener("popstate", onBackNavigation);
-      window.removeEventListener("mouseup", onMouseBackButton);
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("mouseup", onMouseNavButton);
     };
   });
 
@@ -105,17 +122,32 @@
     const nextPost = posts[nextIndex];
     selectedId = nextPost?.id ?? null;
     if (openViewer && nextPost) {
-      void openOriginal(nextPost, true);
+      void openOriginal(nextPost, "replace");
     }
   }
 
-  function onBackNavigation() {
-    closeTopLayer(true);
+  function onPopState(event: PopStateEvent) {
+    const state = event.state as { viewer?: number } | null;
+    const viewerId = state?.viewer;
+    if (typeof viewerId === "number") {
+      if (originalViewer?.post.id === viewerId) return;
+      const post = posts.find((p) => p.id === viewerId);
+      if (post) {
+        void openOriginal(post, "skip");
+      } else {
+        originalViewer = null;
+        imageOnly = false;
+      }
+    } else {
+      closeTopLayer(true);
+    }
   }
 
-  function onMouseBackButton(event: MouseEvent) {
+  function onMouseNavButton(event: MouseEvent) {
     if (event.button === 3) {
       closeTopLayer();
+    } else if (event.button === 4) {
+      history.forward();
     }
   }
 
@@ -146,6 +178,7 @@
 
   async function search(targetPage: number = 1) {
     const tags = activePreset ? query.trim() : queryWithSort(query, sortMode);
+    const limit = computePageSize();
     page = Math.max(1, targetPage);
     loading = true;
     hasSearched = true;
@@ -157,9 +190,9 @@
     hasNextPage = false;
 
     try {
-      const result = await searchPosts(tags, page);
+      const result = await searchPosts(tags, page, limit);
       posts = result.posts;
-      hasNextPage = posts.length >= POSTS_PER_PAGE;
+      hasNextPage = posts.length >= limit;
       status = `${posts.length} post${posts.length === 1 ? "" : "s"}`;
       for (const post of posts) {
         void loadPreview(post);
@@ -225,7 +258,7 @@
     activePreset = null;
   }
 
-  async function openOriginal(post: Post, replaceHistory = false) {
+  async function openOriginal(post: Post, historyMode: "push" | "replace" | "skip" = "push") {
     const url = originalUrl(post);
     downloadStatus = "";
     imageOnly = false;
@@ -235,10 +268,10 @@
       loading: !!url,
       error: url ? null : "original file is unavailable",
     };
-    if (replaceHistory) {
-      history.replaceState({ viewer: post.id }, "", "");
-    } else {
+    if (historyMode === "push") {
       history.pushState({ viewer: post.id }, "", "");
+    } else if (historyMode === "replace") {
+      history.replaceState({ viewer: post.id }, "", "");
     }
 
     if (!url) return;
