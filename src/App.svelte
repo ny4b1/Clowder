@@ -11,6 +11,7 @@
     favoritePost,
     fetchPreview,
     getAccount,
+    mediaUrl,
     originalUrl,
     searchPosts,
     signIn,
@@ -47,6 +48,7 @@
   let downloadPending = $state<Record<number, boolean>>({});
   let downloadStatus = $state("");
   let originalViewer = $state<OriginalViewerState | null>(null);
+  let imageOnly = $state(false);
 
   let selectedPost = $derived(posts.find((post) => post.id === selectedId) ?? null);
   let presets = $derived(
@@ -115,7 +117,9 @@
   }
 
   function closeTopLayer(fromHistory = false) {
-    if (originalViewer) {
+    if (imageOnly) {
+      imageOnly = false;
+    } else if (originalViewer) {
       closeOriginal(fromHistory);
     } else if (showAccount && !accountSaving) {
       closeAccount();
@@ -211,6 +215,7 @@
   async function openOriginal(post: Post, replaceHistory = false) {
     const url = originalUrl(post);
     downloadStatus = "";
+    imageOnly = false;
     originalViewer = {
       post,
       dataUrl: null,
@@ -226,11 +231,11 @@
     if (!url) return;
 
     try {
-      const result = await fetchPreview(url);
+      const result = await mediaUrl(url);
       if (originalViewer?.post.id === post.id) {
         originalViewer = {
           ...originalViewer,
-          dataUrl: result.data_url,
+          dataUrl: result,
           loading: false,
           error: null,
         };
@@ -249,6 +254,7 @@
 
   function closeOriginal(fromHistory = false) {
     originalViewer = null;
+    imageOnly = false;
     if (!fromHistory && history.state?.viewer) {
       history.back();
     }
@@ -431,11 +437,13 @@
   {#if originalViewer}
     <OriginalViewer
       viewer={originalViewer}
+      {imageOnly}
       {username}
       favoritePending={!!favoritePending[originalViewer.post.id]}
       downloadPending={!!downloadPending[originalViewer.post.id]}
       {downloadStatus}
       onClose={closeOriginal}
+      onToggleImageOnly={() => (imageOnly = !imageOnly)}
       onSearchTag={searchTag}
       onToggleFavorite={toggleFavorite}
       onDownload={downloadOriginal}

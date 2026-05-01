@@ -9,6 +9,10 @@ export function fetchPreview(url: string) {
   return invoke<{ data_url: string }>("fetch_preview", { url });
 }
 
+export function mediaUrl(url: string) {
+  return invoke<string>("media_url", { url });
+}
+
 export function fetchTagSuggestions(term: string) {
   return invoke<TagSuggestion[]>("autocomplete_tags", { term });
 }
