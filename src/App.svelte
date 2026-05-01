@@ -7,6 +7,7 @@
   import SearchHeader from "./components/SearchHeader.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import {
+    POSTS_PER_PAGE,
     downloadFile,
     favoritePost,
     fetchPreview,
@@ -37,6 +38,8 @@
   let failedPreviews = $state<Record<number, boolean>>({});
   let activePreset = $state<string | null>(basePresets[0].value);
   let sortMode = $state<SortMode>("latest");
+  let page = $state(1);
+  let hasNextPage = $state(false);
 
   let username = $state<string | null>(null);
   let showAccount = $state(false);
@@ -141,8 +144,9 @@
     }
   }
 
-  async function search() {
+  async function search(targetPage: number = 1) {
     const tags = activePreset ? query.trim() : queryWithSort(query, sortMode);
+    page = Math.max(1, targetPage);
     loading = true;
     hasSearched = true;
     status = `searching ${tags || "all"}`;
@@ -150,10 +154,12 @@
     previews = {};
     failedPreviews = {};
     selectedId = null;
+    hasNextPage = false;
 
     try {
-      const result = await searchPosts(tags);
+      const result = await searchPosts(tags, page);
       posts = result.posts;
+      hasNextPage = posts.length >= POSTS_PER_PAGE;
       status = `${posts.length} post${posts.length === 1 ? "" : "s"}`;
       for (const post of posts) {
         void loadPreview(post);
@@ -163,6 +169,13 @@
     } finally {
       loading = false;
     }
+  }
+
+  function goToPage(delta: number) {
+    const next = page + delta;
+    if (next < 1 || (delta > 0 && !hasNextPage) || loading) return;
+    void search(next);
+    document.querySelector("[data-grid-scroll]")?.scrollTo({ top: 0 });
   }
 
   async function loadPreview(post: Post) {
@@ -400,9 +413,13 @@
     {status}
     {loading}
     {username}
+    {hasSearched}
+    {page}
+    {hasNextPage}
     onQueryChange={setQuery}
     onSearch={search}
     onOpenAccount={openAccount}
+    onPageChange={goToPage}
   />
 
   <Toolbar

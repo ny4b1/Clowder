@@ -14,13 +14,28 @@
     status: string;
     loading: boolean;
     username: string | null;
+    hasSearched: boolean;
+    page: number;
+    hasNextPage: boolean;
     onQueryChange: (query: string) => void;
     onSearch: () => void;
     onOpenAccount: () => void;
+    onPageChange: (delta: number) => void;
   };
 
-  let { query, status, loading, username, onQueryChange, onSearch, onOpenAccount }: Props =
-    $props();
+  let {
+    query,
+    status,
+    loading,
+    username,
+    hasSearched,
+    page,
+    hasNextPage,
+    onQueryChange,
+    onSearch,
+    onOpenAccount,
+    onPageChange,
+  }: Props = $props();
 
   let suggestions = $state<TagSuggestion[]>([]);
   let showSuggestions = $state(false);
@@ -188,6 +203,54 @@
       ></span>
       {status}
     </span>
+    {#if hasSearched}
+      <span class="h-4 w-px bg-room-line"></span>
+      <div class="flex items-center gap-1.5">
+        <button
+          type="button"
+          onclick={() => onPageChange(-1)}
+          disabled={loading || page <= 1}
+          aria-label="previous page"
+          class="flex size-6 items-center justify-center rounded-[2px] border border-room-line bg-room-panel text-room-text-mid transition-colors duration-150 hover:border-room-line-strong hover:text-room-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-room-line disabled:hover:text-room-text-mid"
+        >
+          <svg
+            class="size-3"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <span class="px-1 text-[10.5px] uppercase tracking-[0.18em] text-room-text-low">
+          page <span class="text-room-text">{page}</span>
+        </span>
+        <button
+          type="button"
+          onclick={() => onPageChange(1)}
+          disabled={loading || !hasNextPage}
+          aria-label="next page"
+          class="flex size-6 items-center justify-center rounded-[2px] border border-room-line bg-room-panel text-room-text-mid transition-colors duration-150 hover:border-room-line-strong hover:text-room-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-room-line disabled:hover:text-room-text-mid"
+        >
+          <svg
+            class="size-3"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+    {/if}
     <span class="h-4 w-px bg-room-line"></span>
     <button
       type="button"

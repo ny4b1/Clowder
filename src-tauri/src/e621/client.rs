@@ -13,7 +13,7 @@ use super::ech::configure_ech_client;
 use super::types::{Credentials, Post, PostsResponse, Tag, TagsResponse};
 
 const HOST: &str = "e621.net";
-const MAX_LIMIT: u32 = 48;
+const MAX_LIMIT: u32 = 64;
 const USER_AGENT_VALUE: &str = concat!(
     "clowder/",
     env!("CARGO_PKG_VERSION"),
@@ -86,13 +86,18 @@ impl Client {
         self.credentials.read().expect("credentials lock").clone()
     }
 
-    pub async fn search(&self, tags: &str) -> Result<SearchOutcome> {
+    pub async fn search(&self, tags: &str, page: u32) -> Result<SearchOutcome> {
         self.wait_for_api_slot().await;
 
+        let page = page.max(1);
         let mut req = self
             .api_http
             .get(format!("https://{HOST}/posts.json"))
-            .query(&[("tags", tags.trim()), ("limit", &MAX_LIMIT.to_string())]);
+            .query(&[
+                ("tags", tags.trim()),
+                ("limit", &MAX_LIMIT.to_string()),
+                ("page", &page.to_string()),
+            ]);
         if let Some(creds) = self.auth() {
             req = req.basic_auth(&creds.username, Some(&creds.api_key));
         }
