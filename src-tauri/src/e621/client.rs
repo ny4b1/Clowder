@@ -13,11 +13,12 @@ use super::ech::configure_ech_client;
 use super::types::{Credentials, Post, PostsResponse, Tag, TagsResponse};
 
 const HOST: &str = "e621.net";
-const MAX_LIMIT: u32 = 64;
+const MAX_LIMIT: u32 = 320;
+const MIN_LIMIT: u32 = 8;
 const USER_AGENT_VALUE: &str = concat!(
     "clowder/",
     env!("CARGO_PKG_VERSION"),
-    " (desktop viewer; contact: local user)"
+    " (https://github.com/nyabi021/Clowder)"
 );
 
 #[derive(Debug, Clone)]
@@ -86,16 +87,17 @@ impl Client {
         self.credentials.read().expect("credentials lock").clone()
     }
 
-    pub async fn search(&self, tags: &str, page: u32) -> Result<SearchOutcome> {
+    pub async fn search(&self, tags: &str, page: u32, limit: u32) -> Result<SearchOutcome> {
         self.wait_for_api_slot().await;
 
         let page = page.max(1);
+        let limit = limit.clamp(MIN_LIMIT, MAX_LIMIT);
         let mut req = self
             .api_http
             .get(format!("https://{HOST}/posts.json"))
             .query(&[
                 ("tags", tags.trim()),
-                ("limit", &MAX_LIMIT.to_string()),
+                ("limit", &limit.to_string()),
                 ("page", &page.to_string()),
             ]);
         if let Some(creds) = self.auth() {

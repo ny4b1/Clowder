@@ -1,10 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AccountResponse, Post, SearchResponse, TagSuggestion } from "./types";
 
-export const POSTS_PER_PAGE = 64;
-
-export function searchPosts(tags: string, page: number) {
-  return invoke<SearchResponse>("search_posts", { tags, page });
+export function searchPosts(tags: string, page: number, limit: number) {
+  return invoke<SearchResponse>("search_posts", { tags, page, limit });
 }
 
 export function fetchPreview(url: string) {

@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod credentials;
 mod e621;
 
@@ -58,11 +60,12 @@ async fn autocomplete_tags(
 async fn search_posts(
     tags: String,
     page: u32,
+    limit: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SearchResponse, String> {
     let client = get_client(&state).await?;
     let outcome = client
-        .search(&tags, page)
+        .search(&tags, page, limit)
         .await
         .map_err(|err| format!("{err:#}"))?;
     Ok(SearchResponse {
