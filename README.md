@@ -1,5 +1,10 @@
 # Clowder
 
+![Release](https://img.shields.io/github/v/release/nyabi021/Clowder?style=flat&color=6366f1)
+![Downloads](https://img.shields.io/github/downloads/nyabi021/Clowder/total?style=flat&color=10b981)
+![Last Commit](https://img.shields.io/github/last-commit/nyabi021/Clowder?style=flat&color=f59e0b)
+![License](https://img.shields.io/badge/license-GPL--3.0--or--later-8b5cf6?style=flat)
+
 A fast, native desktop viewer for e621.
 
 Clowder is a lightweight cross-platform client built with Tauri and Svelte.
