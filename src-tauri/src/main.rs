@@ -15,8 +15,8 @@ use tauri::State;
 use tauri::http::{
     Response, StatusCode,
     header::{
-        ACCEPT_RANGES, ACCESS_CONTROL_EXPOSE_HEADERS, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
-        RANGE,
+        ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CONTENT_LENGTH,
+        CONTENT_RANGE, CONTENT_TYPE, RANGE,
     },
 };
 use tokio::sync::Mutex;
@@ -57,11 +57,12 @@ async fn autocomplete_tags(
 #[tauri::command]
 async fn search_posts(
     tags: String,
+    page: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SearchResponse, String> {
     let client = get_client(&state).await?;
     let outcome = client
-        .search(&tags)
+        .search(&tags, page)
         .await
         .map_err(|err| format!("{err:#}"))?;
     Ok(SearchResponse {
@@ -94,10 +95,12 @@ fn media_url(url: String) -> Result<String, String> {
         "https" | "http" => {}
         scheme => return Err(format!("unsupported media URL scheme: {scheme}")),
     }
-    Ok(format!(
-        "clowder-media://localhost/{}",
-        URL_SAFE_NO_PAD.encode(url.as_bytes())
-    ))
+    let token = URL_SAFE_NO_PAD.encode(url.as_bytes());
+    #[cfg(target_os = "windows")]
+    let out = format!("http://clowder-media.localhost/{token}");
+    #[cfg(not(target_os = "windows"))]
+    let out = format!("clowder-media://localhost/{token}");
+    Ok(out)
 }
 
 #[tauri::command]
@@ -238,6 +241,7 @@ async fn fetch_media_response(
     let mut builder = Response::builder()
         .status(StatusCode::from_u16(media.status).unwrap_or(StatusCode::OK))
         .header(ACCEPT_RANGES, "bytes")
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header(
             ACCESS_CONTROL_EXPOSE_HEADERS,
             "content-range, content-length, accept-ranges",

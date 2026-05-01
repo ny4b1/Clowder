@@ -27,7 +27,7 @@
   }: Props = $props();
 </script>
 
-<div class="order-2 overflow-auto p-3">
+<div class="order-2 overflow-auto p-3" data-grid-scroll>
   {#if posts.length === 0}
     <div class="grid h-full place-items-center px-6">
       <div class="max-w-md text-center">
