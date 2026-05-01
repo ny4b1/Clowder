@@ -5,10 +5,20 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use base64::Engine;
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use e621::{Client, Credentials, Post, Tag};
 use serde::Serialize;
 use tauri::State;
+use tauri::http::{
+    Response, StatusCode,
+    header::{
+        ACCEPT_RANGES, ACCESS_CONTROL_EXPOSE_HEADERS, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
+        RANGE,
+    },
+};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
@@ -71,10 +81,23 @@ async fn fetch_preview(
         .await
         .map_err(|err| format!("{err:#}"))?;
     let mime = mime_for_url(&url);
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let encoded = STANDARD.encode(bytes);
     Ok(PreviewResponse {
         data_url: format!("data:{mime};base64,{encoded}"),
     })
+}
+
+#[tauri::command]
+fn media_url(url: String) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(&url).map_err(|err| format!("{err:#}"))?;
+    match parsed.scheme() {
+        "https" | "http" => {}
+        scheme => return Err(format!("unsupported media URL scheme: {scheme}")),
+    }
+    Ok(format!(
+        "clowder-media://localhost/{}",
+        URL_SAFE_NO_PAD.encode(url.as_bytes())
+    ))
 }
 
 #[tauri::command]
@@ -157,6 +180,10 @@ async fn unfavorite_post(post_id: u64, state: State<'_, Arc<AppState>>) -> Resul
 }
 
 async fn get_client(state: &State<'_, Arc<AppState>>) -> Result<Client, String> {
+    get_client_inner(state.inner()).await
+}
+
+async fn get_client_inner(state: &Arc<AppState>) -> Result<Client, String> {
     let mut guard = state.client.lock().await;
     if let Some(client) = guard.as_ref() {
         return Ok(client.clone());
@@ -172,6 +199,103 @@ async fn get_client(state: &State<'_, Arc<AppState>>) -> Result<Client, String> 
 
     *guard = Some(client.clone());
     Ok(client)
+}
+
+async fn serve_media_request(
+    request: tauri::http::Request<Vec<u8>>,
+    state: Arc<AppState>,
+) -> Response<Vec<u8>> {
+    match fetch_media_response(request, state).await {
+        Ok(response) => response,
+        Err(error) => text_response(StatusCode::BAD_GATEWAY, format!("{error:#}")),
+    }
+}
+
+async fn fetch_media_response(
+    request: tauri::http::Request<Vec<u8>>,
+    state: Arc<AppState>,
+) -> anyhow::Result<Response<Vec<u8>>> {
+    let token = request.uri().path().trim_start_matches('/');
+    let decoded = URL_SAFE_NO_PAD
+        .decode(token)
+        .map_err(|err| anyhow::anyhow!("decode media token: {err}"))?;
+    let url =
+        String::from_utf8(decoded).map_err(|err| anyhow::anyhow!("decode media URL: {err}"))?;
+    let range = request
+        .headers()
+        .get(RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|range| media_range(&url, range));
+
+    let client = get_client_inner(&state)
+        .await
+        .map_err(|err| anyhow::anyhow!(err))?;
+    let media = client
+        .download_media(&url, range.as_deref())
+        .await
+        .map_err(|err| anyhow::anyhow!("fetch media: {err:#}"))?;
+
+    let mut builder = Response::builder()
+        .status(StatusCode::from_u16(media.status).unwrap_or(StatusCode::OK))
+        .header(ACCEPT_RANGES, "bytes")
+        .header(
+            ACCESS_CONTROL_EXPOSE_HEADERS,
+            "content-range, content-length, accept-ranges",
+        );
+    if let Some(content_type) = media.content_type {
+        builder = builder.header(CONTENT_TYPE, content_type);
+    } else {
+        builder = builder.header(CONTENT_TYPE, mime_for_url(&url));
+    }
+    if let Some(content_length) = media.content_length {
+        builder = builder.header(CONTENT_LENGTH, content_length);
+    }
+    if let Some(content_range) = media.content_range {
+        builder = builder.header(CONTENT_RANGE, content_range);
+    }
+    if let Some(accept_ranges) = media.accept_ranges {
+        builder = builder.header(ACCEPT_RANGES, accept_ranges);
+    }
+
+    builder
+        .body(media.bytes)
+        .map_err(|err| anyhow::anyhow!("build media response: {err}"))
+}
+
+fn media_range(url: &str, range: &str) -> Option<String> {
+    if is_video_url(url) {
+        return capped_video_range(range);
+    }
+    Some(range.trim().to_string())
+}
+
+fn capped_video_range(range: &str) -> Option<String> {
+    const MAX_CHUNK: u64 = 2 * 1024 * 1024;
+    let range = range.trim();
+    let value = range.strip_prefix("bytes=")?;
+    let first = value.split(',').next()?.trim();
+    let (start, end) = first.split_once('-')?;
+    if start.is_empty() {
+        return Some(format!("bytes=-{MAX_CHUNK}"));
+    }
+    let start = start.parse::<u64>().ok()?;
+    let requested_end = end.parse::<u64>().ok();
+    let capped_end = start + MAX_CHUNK - 1;
+    let end = requested_end.map_or(capped_end, |end| end.min(capped_end));
+    Some(format!("bytes={start}-{end}"))
+}
+
+fn is_video_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.ends_with(".webm") || lower.ends_with(".mp4")
+}
+
+fn text_response(status: StatusCode, body: String) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(body.into_bytes())
+        .expect("build text response")
 }
 
 fn mime_for_url(url: &str) -> &'static str {
@@ -256,12 +380,24 @@ fn sanitize_filename(filename: &str) -> String {
 }
 
 fn main() {
+    let app_state = Arc::new(AppState::default());
+    let media_state = app_state.clone();
     tauri::Builder::default()
-        .manage(Arc::new(AppState::default()))
+        .manage(app_state)
+        .register_asynchronous_uri_scheme_protocol(
+            "clowder-media",
+            move |_ctx, request, responder| {
+                let state = media_state.clone();
+                tauri::async_runtime::spawn(async move {
+                    responder.respond(serve_media_request(request, state).await);
+                });
+            },
+        )
         .invoke_handler(tauri::generate_handler![
             autocomplete_tags,
             search_posts,
             fetch_preview,
+            media_url,
             download_file,
             get_account,
             sign_in,

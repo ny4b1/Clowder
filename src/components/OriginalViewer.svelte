@@ -5,11 +5,13 @@
 
   type Props = {
     viewer: OriginalViewerState;
+    imageOnly: boolean;
     username: string | null;
     favoritePending: boolean;
     downloadPending: boolean;
     downloadStatus: string;
     onClose: () => void;
+    onToggleImageOnly: () => void;
     onSearchTag: (tag: string) => void;
     onToggleFavorite: (post: Post) => void;
     onDownload: (post: Post) => void;
@@ -17,54 +19,82 @@
 
   let {
     viewer,
+    imageOnly,
     username,
     favoritePending,
     downloadPending,
     downloadStatus,
     onClose,
+    onToggleImageOnly,
     onSearchTag,
     onToggleFavorite,
     onDownload,
   }: Props = $props();
 </script>
 
-<div class="fixed inset-0 z-40 grid grid-rows-[42px_minmax(0,1fr)] bg-room-floor">
-  <div class="flex items-center justify-between border-b border-room-line bg-room-panel px-4">
-    <div class="min-w-0">
-      <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
-        original
-      </div>
-      <div class="truncate font-mono text-[12px] tabular-nums text-room-text">
-        #{viewer.post.id}
-        <span class="text-room-text-low">
-          {(viewer.post.file?.ext || "").toUpperCase()} {dimsLabel(viewer.post)}
-        </span>
-      </div>
-    </div>
-    <button
-      type="button"
-      onclick={onClose}
-      class="flex size-8 items-center justify-center rounded-[3px] border border-room-line bg-room-panel text-room-text-mid transition-colors duration-150 hover:border-room-line-strong hover:text-room-text"
-      aria-label="Close original"
-    >
-      <svg
-        class="size-3.5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
+{#if imageOnly}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="fixed inset-0 z-50 bg-room-floor" onclick={onToggleImageOnly}>
+    {#if viewer.loading}
+      <span
+        class="absolute left-1/2 top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
         aria-hidden="true"
-      >
-        <path d="M18 6 6 18" />
-        <path d="m6 6 12 12" />
-      </svg>
-    </button>
+      ></span>
+    {:else if viewer.error}
+      <div class="absolute left-1/2 top-1/2 max-w-lg -translate-x-1/2 -translate-y-1/2 text-center font-mono text-[11px] leading-relaxed text-room-fav">
+        {viewer.error}
+      </div>
+    {:else if viewer.dataUrl && isVideoPost(viewer.post)}
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain" src={viewer.dataUrl} controls autoplay loop></video>
+    {:else if viewer.dataUrl}
+      <img
+        class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain"
+        src={viewer.dataUrl}
+        alt={postLabel(viewer.post)}
+        draggable="false"
+      />
+    {/if}
   </div>
+{:else}
+  <div class="fixed inset-0 z-40 grid grid-rows-[42px_minmax(0,1fr)] bg-room-floor">
+    <div class="flex items-center justify-between border-b border-room-line bg-room-panel px-4">
+      <div class="min-w-0">
+        <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
+          original
+        </div>
+        <div class="truncate font-mono text-[12px] tabular-nums text-room-text">
+          #{viewer.post.id}
+          <span class="text-room-text-low">
+            {(viewer.post.file?.ext || "").toUpperCase()} {dimsLabel(viewer.post)}
+          </span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onclick={onClose}
+        class="flex size-8 items-center justify-center rounded-[3px] border border-room-line bg-room-panel text-room-text-mid transition-colors duration-150 hover:border-room-line-strong hover:text-room-text"
+        aria-label="Close original"
+      >
+        <svg
+          class="size-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
+    </div>
 
-  <div class="grid min-h-0 grid-cols-[300px_minmax(0,1fr)]">
-    <aside class="min-h-0 overflow-auto border-r border-room-line bg-room-panel/40">
+    <div class="grid min-h-0 grid-cols-[300px_minmax(0,1fr)]">
+      <aside class="min-h-0 overflow-auto border-r border-room-line bg-room-panel/40">
       <section class="border-b border-room-line px-4 py-3">
         <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
           post
@@ -102,42 +132,47 @@
           </section>
         {/if}
       {/each}
-    </aside>
+      </aside>
 
-    <div class="min-h-0 overflow-auto">
-      <div class="p-4">
-        <div class="grid min-h-full place-items-start justify-center">
+      <div class="grid min-h-0 grid-rows-[minmax(0,1fr)_56px]">
+        <div class="relative min-h-0 overflow-hidden">
           {#if viewer.loading}
             <span
-              class="mt-10 size-4 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
+              class="absolute left-1/2 top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
               aria-hidden="true"
             ></span>
           {:else if viewer.error}
-            <div class="mt-10 max-w-lg text-center font-mono text-[11px] leading-relaxed text-room-fav">
+            <div class="absolute left-1/2 top-1/2 max-w-lg -translate-x-1/2 -translate-y-1/2 text-center font-mono text-[11px] leading-relaxed text-room-fav">
               {viewer.error}
             </div>
           {:else if viewer.dataUrl && isVideoPost(viewer.post)}
             <!-- svelte-ignore a11y_media_has_caption -->
             <video
-              class="max-w-full"
+              class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain"
               src={viewer.dataUrl}
               controls
               autoplay
               loop
             ></video>
           {:else if viewer.dataUrl}
-            <img
-              class="max-w-full object-contain"
-              src={viewer.dataUrl}
-              alt={postLabel(viewer.post)}
-              draggable="false"
-            />
+            <button
+              type="button"
+              onclick={onToggleImageOnly}
+              class="absolute inset-4 flex cursor-zoom-in items-center justify-center bg-transparent p-0"
+              aria-label="Open image only view"
+            >
+              <img
+                class="h-full w-full object-contain"
+                src={viewer.dataUrl}
+                alt={postLabel(viewer.post)}
+                draggable="false"
+              />
+            </button>
           {/if}
         </div>
-      </div>
 
-      <section class="border-t border-room-line bg-room-panel/25 px-4 py-3">
-        <div class="flex flex-wrap items-center gap-2">
+        <section class="border-t border-room-line bg-room-panel/25 px-4 py-3">
+          <div class="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onclick={() => onToggleFavorite(viewer.post)}
@@ -184,8 +219,9 @@
           {#if downloadStatus}
             <span class="font-mono text-[10.5px] text-room-text-low">{downloadStatus}</span>
           {/if}
-        </div>
-      </section>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
-</div>
+{/if}

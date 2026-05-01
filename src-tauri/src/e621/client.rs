@@ -3,7 +3,10 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{
+    ACCEPT, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderMap, HeaderValue,
+    RANGE, USER_AGENT,
+};
 use tokio::sync::Mutex;
 
 use super::ech::configure_ech_client;
@@ -21,6 +24,15 @@ const USER_AGENT_VALUE: &str = concat!(
 pub struct SearchOutcome {
     pub posts: Vec<Post>,
     pub ech_enabled: bool,
+}
+
+pub struct MediaResponse {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub content_length: Option<String>,
+    pub content_range: Option<String>,
+    pub accept_ranges: Option<String>,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -220,6 +232,10 @@ impl Client {
     }
 
     pub async fn download_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        Ok(self.download_media(url, None).await?.bytes)
+    }
+
+    pub async fn download_media(&self, url: &str, range: Option<&str>) -> Result<MediaResponse> {
         let parsed = reqwest::Url::parse(url).context("parse media URL")?;
         let host = parsed
             .host_str()
@@ -227,16 +243,29 @@ impl Client {
             .to_string();
 
         let http = self.media_client_for(&host).await?;
-        let resp = http
-            .get(parsed)
-            .send()
-            .await
-            .context("send media request")?;
+        let mut req = http.get(parsed);
+        if let Some(range) = range {
+            req = req.header(RANGE, range);
+        }
+        if let Some(creds) = self.auth() {
+            req = req.basic_auth(&creds.username, Some(&creds.api_key));
+        }
+
+        let resp = req.send().await.context("send media request")?;
         let status = resp.status();
-        if !status.is_success() {
+        if !status.is_success() && status.as_u16() != 206 {
             return Err(anyhow!("media download failed: HTTP {status}"));
         }
-        Ok(resp.bytes().await.context("read media response")?.to_vec())
+        let headers = resp.headers().clone();
+        let bytes = resp.bytes().await.context("read media response")?.to_vec();
+        Ok(MediaResponse {
+            status: status.as_u16(),
+            content_type: header_string(&headers, CONTENT_TYPE),
+            content_length: header_string(&headers, CONTENT_LENGTH),
+            content_range: header_string(&headers, CONTENT_RANGE),
+            accept_ranges: header_string(&headers, ACCEPT_RANGES),
+            bytes,
+        })
     }
 
     async fn media_client_for(&self, host: &str) -> Result<reqwest::Client> {
@@ -270,6 +299,13 @@ impl Client {
         }
         *last = Instant::now();
     }
+}
+
+fn header_string(headers: &HeaderMap, name: reqwest::header::HeaderName) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(ToString::to_string)
 }
 
 fn trim_body(body: &str) -> String {
