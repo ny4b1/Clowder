@@ -38,6 +38,7 @@ body {
 
 button,
 input,
+textarea,
 select,
 a {
   font: inherit;

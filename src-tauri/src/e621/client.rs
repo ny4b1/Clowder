@@ -10,7 +10,10 @@ use reqwest::header::{
 use tokio::sync::Mutex;
 
 use super::ech::configure_ech_client;
-use super::types::{Credentials, Post, PostsResponse, Tag, TagsResponse};
+use super::types::{
+    Comment, CommentCreateResponse, CommentUpdateResponse, CommentsResponse, Credentials, Post,
+    PostUpdateResponse, PostsResponse, Tag, TagsResponse,
+};
 
 const HOST: &str = "e621.net";
 const MAX_LIMIT: u32 = 320;
@@ -119,24 +122,33 @@ impl Client {
         })
     }
 
-    pub async fn autocomplete_tags(&self, term: &str) -> Result<Vec<Tag>> {
+    pub async fn autocomplete_tags(&self, term: &str, category: Option<u8>) -> Result<Vec<Tag>> {
         let term = term.trim().trim_start_matches('-').replace(' ', "_");
-        if term.len() < 2 {
+        if term.len() < 2 && category.is_none() {
             return Ok(Vec::new());
         }
 
         self.wait_for_api_slot().await;
 
-        let name_matches = format!("{term}*");
+        let name_matches = if term.is_empty() {
+            "*".to_string()
+        } else {
+            format!("{term}*")
+        };
+        let mut query = vec![
+            ("search[name_matches]", name_matches),
+            ("search[order]", "count".to_string()),
+            ("search[hide_empty]", "true".to_string()),
+            ("limit", "12".to_string()),
+        ];
+        if let Some(category) = category {
+            query.push(("search[category]", category.to_string()));
+        }
+
         let mut req = self
             .api_http
             .get(format!("https://{HOST}/tags.json"))
-            .query(&[
-                ("search[name_matches]", name_matches.as_str()),
-                ("search[order]", "count"),
-                ("search[hide_empty]", "true"),
-                ("limit", "12"),
-            ]);
+            .query(&query);
         if let Some(creds) = self.auth() {
             req = req.basic_auth(&creds.username, Some(&creds.api_key));
         }
@@ -300,11 +312,180 @@ impl Client {
     async fn wait_for_api_slot(&self) {
         let mut last = self.limiter.lock().await;
         let elapsed = last.elapsed();
-        let min_gap = Duration::from_millis(550);
+        let min_gap = Duration::from_secs(1);
         if elapsed < min_gap {
             tokio::time::sleep(min_gap - elapsed).await;
         }
         *last = Instant::now();
+    }
+}
+
+impl Client {
+    pub async fn update_post_tags(
+        &self,
+        post_id: u64,
+        tag_string_diff: &str,
+        edit_reason: &str,
+    ) -> Result<Post> {
+        let creds = self
+            .auth()
+            .ok_or_else(|| anyhow!("login required to edit tags"))?;
+        let tag_string_diff = tag_string_diff.trim();
+        if tag_string_diff.is_empty() {
+            return Err(anyhow!("tag changes are required"));
+        }
+
+        self.wait_for_api_slot().await;
+
+        let mut query = vec![("post[tag_string_diff]", tag_string_diff.to_string())];
+        let edit_reason = edit_reason.trim();
+        if !edit_reason.is_empty() {
+            query.push(("post[edit_reason]", edit_reason.to_string()));
+        }
+
+        let resp = self
+            .api_http
+            .patch(format!("https://{HOST}/posts/{post_id}.json"))
+            .query(&query)
+            .basic_auth(&creds.username, Some(&creds.api_key))
+            .send()
+            .await
+            .context("send post tag update request")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "tag update failed: HTTP {status} {}",
+                trim_body(&body)
+            ));
+        }
+
+        match resp
+            .json::<PostUpdateResponse>()
+            .await
+            .context("decode updated post response")?
+        {
+            PostUpdateResponse::Post(post) | PostUpdateResponse::Wrapped { post } => Ok(post),
+        }
+    }
+
+    pub async fn comments(&self, post_id: u64, limit: u32) -> Result<Vec<Comment>> {
+        self.wait_for_api_slot().await;
+
+        let limit = limit.clamp(1, MAX_LIMIT);
+        let mut req = self
+            .api_http
+            .get(format!("https://{HOST}/comments.json"))
+            .query(&[
+                ("search[post_id]", post_id.to_string()),
+                ("limit", limit.to_string()),
+                ("group_by", "comment".to_string()),
+            ]);
+        if let Some(creds) = self.auth() {
+            req = req.basic_auth(&creds.username, Some(&creds.api_key));
+        }
+
+        let resp = req.send().await.context("send comments request")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "comments failed: HTTP {status} {}",
+                trim_body(&body)
+            ));
+        }
+
+        match resp
+            .json::<CommentsResponse>()
+            .await
+            .context("decode comments response")?
+        {
+            CommentsResponse::List(comments) | CommentsResponse::Empty { comments } => Ok(comments),
+        }
+    }
+
+    pub async fn create_comment(&self, post_id: u64, body: &str) -> Result<Comment> {
+        let creds = self
+            .auth()
+            .ok_or_else(|| anyhow!("login required to comment"))?;
+        let body = body.trim();
+        if body.is_empty() {
+            return Err(anyhow!("comment body is required"));
+        }
+
+        self.wait_for_api_slot().await;
+
+        let resp = self
+            .api_http
+            .post(format!("https://{HOST}/comments.json"))
+            .query(&[
+                ("comment[post_id]", post_id.to_string()),
+                ("comment[body]", body.to_string()),
+            ])
+            .basic_auth(&creds.username, Some(&creds.api_key))
+            .send()
+            .await
+            .context("send create comment request")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "comment failed: HTTP {status} {}",
+                trim_body(&body)
+            ));
+        }
+
+        match resp
+            .json::<CommentCreateResponse>()
+            .await
+            .context("decode created comment response")?
+        {
+            CommentCreateResponse::Comment(comment)
+            | CommentCreateResponse::Wrapped { comment } => Ok(comment),
+        }
+    }
+
+    pub async fn hide_comment(&self, comment_id: u64) -> Result<Comment> {
+        let creds = self
+            .auth()
+            .ok_or_else(|| anyhow!("login required to hide comments"))?;
+
+        self.wait_for_api_slot().await;
+
+        let resp = self
+            .api_http
+            .post(format!("https://{HOST}/comments/{comment_id}/hide.json"))
+            .basic_auth(&creds.username, Some(&creds.api_key))
+            .send()
+            .await
+            .context("send hide comment request")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "hide comment failed: HTTP {status} {}",
+                trim_body(&body)
+            ));
+        }
+
+        let body = resp.text().await.context("read hidden comment response")?;
+        if body.trim().is_empty() {
+            return Ok(Comment {
+                id: comment_id,
+                is_hidden: true,
+                ..Comment::default()
+            });
+        }
+
+        match serde_json::from_str::<CommentUpdateResponse>(&body)
+            .context("decode hidden comment response")?
+        {
+            CommentUpdateResponse::Comment(comment)
+            | CommentUpdateResponse::Wrapped { comment } => Ok(comment),
+        }
     }
 }
 

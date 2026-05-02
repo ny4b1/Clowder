@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AccountResponse, Post, SearchResponse, TagSuggestion } from "./types";
+import type { AccountResponse, Comment, Post, SearchResponse, TagSuggestion } from "./types";
 
 export function searchPosts(tags: string, page: number, limit: number) {
   return invoke<SearchResponse>("search_posts", { tags, page, limit });
@@ -13,8 +13,8 @@ export function mediaUrl(url: string) {
   return invoke<string>("media_url", { url });
 }
 
-export function fetchTagSuggestions(term: string) {
-  return invoke<TagSuggestion[]>("autocomplete_tags", { term });
+export function fetchTagSuggestions(term: string, category: number | null = null) {
+  return invoke<TagSuggestion[]>("autocomplete_tags", { term, category });
 }
 
 export function getAccount() {
@@ -35,6 +35,22 @@ export function favoritePost(postId: number) {
 
 export function unfavoritePost(postId: number) {
   return invoke("unfavorite_post", { postId });
+}
+
+export function fetchComments(postId: number, limit = 40) {
+  return invoke<Comment[]>("fetch_comments", { postId, limit });
+}
+
+export function createComment(postId: number, body: string) {
+  return invoke<Comment>("create_comment", { postId, body });
+}
+
+export function hideComment(commentId: number) {
+  return invoke<Comment>("hide_comment", { commentId });
+}
+
+export function updatePostTags(postId: number, tagStringDiff: string, editReason: string) {
+  return invoke<Post>("update_post_tags", { postId, tagStringDiff, editReason });
 }
 
 export function downloadFile(url: string, filename: string) {

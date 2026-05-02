@@ -7,6 +7,7 @@
     currentToken,
     localMetatagSuggestions,
     looksLikeMetatag,
+    tagAutocompleteTarget,
   } from "../lib/search";
 
   type Props = {
@@ -54,21 +55,29 @@
       return;
     }
 
-    if (token.search.length < 2 || token.search.includes(":") || looksLikeMetatag(token.search)) {
+    const target = tagAutocompleteTarget(token.raw);
+    if (
+      !target ||
+      (!target.qualified && target.term.length < 2) ||
+      (!target.qualified && looksLikeMetatag(token.search))
+    ) {
       suggestions = [];
       showSuggestions = false;
       return;
     }
 
     autocompleteTimer = window.setTimeout(() => {
-      void loadSuggestions(token.search);
+      void loadSuggestions(target.term, target.category, target.insertPrefix);
     }, 160);
   }
 
-  async function loadSuggestions(term: string) {
+  async function loadSuggestions(term: string, category: number | null, insertPrefix: string) {
     try {
-      const result = await fetchTagSuggestions(term);
-      suggestions = result;
+      const result = await fetchTagSuggestions(term, category);
+      suggestions = result.map((suggestion) => ({
+        ...suggestion,
+        insert: `${insertPrefix}${suggestion.name}`,
+      }));
       activeSuggestion = 0;
       showSuggestions = result.length > 0;
     } catch {

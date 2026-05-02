@@ -16,6 +16,7 @@
         "title": "Clowder",
         "width": 1200,
         "height": 820,
+        "maximized": true,
         "minWidth": 980,
         "minHeight": 680
       }

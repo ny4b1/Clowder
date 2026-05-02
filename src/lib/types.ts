@@ -34,6 +34,32 @@ export type Post = {
   is_favorited?: boolean;
   score?: PostScore;
   fav_count?: number;
+  comment_count?: number;
+};
+
+export type Comment = {
+  id: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  post_id: number;
+  creator_id?: number | null;
+  creator_name?: string | null;
+  updater_id?: number | null;
+  body: string;
+  score?: number;
+  is_hidden?: boolean;
+  is_sticky?: boolean;
+  do_not_bump_post?: boolean;
+};
+
+export type CommentState = {
+  items: Comment[];
+  loading: boolean;
+  error: string | null;
+  body: string;
+  submitting: boolean;
+  submitError: string | null;
+  hiding: Record<number, boolean>;
 };
 
 export type SearchResponse = {
