@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "vite build",
+    "build:mac": "tauri build --bundles app,dmg",
+    "build:mac:app": "tauri build --bundles app",
+    "build:mac:dmg": "tauri build --bundles dmg",
     "preview": "vite preview",
     "tauri": "tauri"
   },
