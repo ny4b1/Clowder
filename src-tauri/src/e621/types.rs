@@ -21,6 +21,35 @@ pub struct Post {
     pub score: PostScore,
     #[serde(default)]
     pub fav_count: i64,
+    #[serde(default)]
+    pub comment_count: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Comment {
+    pub id: u64,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub post_id: u64,
+    #[serde(default)]
+    pub creator_id: Option<u64>,
+    #[serde(default)]
+    pub creator_name: Option<String>,
+    #[serde(default)]
+    pub updater_id: Option<u64>,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub score: i64,
+    #[serde(default)]
+    pub is_hidden: bool,
+    #[serde(default)]
+    pub is_sticky: bool,
+    #[serde(default)]
+    pub do_not_bump_post: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -90,4 +119,32 @@ pub struct Tag {
 pub enum TagsResponse {
     List(Vec<Tag>),
     Empty { tags: Vec<Tag> },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum CommentsResponse {
+    List(Vec<Comment>),
+    Empty { comments: Vec<Comment> },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum CommentCreateResponse {
+    Comment(Comment),
+    Wrapped { comment: Comment },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum PostUpdateResponse {
+    Post(Post),
+    Wrapped { post: Post },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum CommentUpdateResponse {
+    Comment(Comment),
+    Wrapped { comment: Comment },
 }

@@ -1,7 +1,12 @@
 <script lang="ts">
-  import type { OriginalViewer as OriginalViewerState, Post } from "../lib/types";
+  import { onMount } from "svelte";
+  import CommentsPanel from "./CommentsPanel.svelte";
+  import OriginalPostSidebar from "./OriginalPostSidebar.svelte";
+  import VideoControls from "./VideoControls.svelte";
+  import type { CommentState, OriginalViewer as OriginalViewerState, Post } from "../lib/types";
   import { isVideoPost } from "../lib/e621";
-  import { dimsLabel, postLabel, tagGroups } from "../lib/search";
+  import { dimsLabel, postLabel } from "../lib/search";
+  import { setWindowFullscreen } from "../lib/window";
 
   type Props = {
     viewer: OriginalViewerState;
@@ -10,11 +15,18 @@
     favoritePending: boolean;
     downloadPending: boolean;
     downloadStatus: string;
+    comments: CommentState;
     onClose: () => void;
     onToggleImageOnly: () => void;
     onSearchTag: (tag: string) => void;
     onToggleFavorite: (post: Post) => void;
     onDownload: (post: Post) => void;
+    onCommentBodyChange: (body: string) => void;
+    onSubmitComment: (post: Post) => void;
+    onRefreshComments: (postId: number) => void;
+    onOpenAccount: () => void;
+    onUpdateTags: (post: Post, tagStringDiff: string, editReason: string) => Promise<void>;
+    onHideComment: (commentId: number) => void;
   };
 
   let {
@@ -24,12 +36,247 @@
     favoritePending,
     downloadPending,
     downloadStatus,
+    comments,
     onClose,
     onToggleImageOnly,
     onSearchTag,
     onToggleFavorite,
     onDownload,
+    onCommentBodyChange,
+    onSubmitComment,
+    onRefreshComments,
+    onOpenAccount,
+    onUpdateTags,
+    onHideComment,
   }: Props = $props();
+
+  let videoElement = $state<HTMLVideoElement | undefined>();
+  let imageOnlyVideoElement = $state<HTMLVideoElement | undefined>();
+  let videoFrameElement = $state<HTMLDivElement | undefined>();
+  let imageOnlyVideoFrameElement = $state<HTMLDivElement | undefined>();
+  let appVideoFullscreen = $state(false);
+  let showVideoMenu = $state(false);
+  let showVideoControls = $state(true);
+  let videoControlsTimer: number | undefined;
+  let videoUi = $state({
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    muted: false,
+    volume: 1,
+  });
+  let videoPlayback = $state({
+    postId: 0,
+    currentTime: 0,
+    paused: true,
+  });
+
+  onMount(() => {
+    const restoreAfterFullscreen = () => {
+      if (document.fullscreenElement) return;
+      appVideoFullscreen = false;
+      void setWindowFullscreen(false).catch(() => {});
+      window.setTimeout(() => restoreVideoPlayback(activeVideoElement()), 80);
+    };
+    const onVideoKeydown = (event: KeyboardEvent) => {
+      if (!isVideoPost(viewer.post) || !viewer.dataUrl) return;
+      if (event.key === "Escape" && (appVideoFullscreen || document.fullscreenElement)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void exitVideoFullscreen(activeVideoElement());
+        return;
+      }
+      if (event.key !== " " && event.key !== "Spacebar") return;
+      if (isTextInput(event.target)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void toggleVideoPlayback(activeVideoElement());
+    };
+    document.addEventListener("fullscreenchange", restoreAfterFullscreen);
+    document.addEventListener("webkitfullscreenchange", restoreAfterFullscreen);
+    window.addEventListener("keydown", onVideoKeydown, { capture: true });
+    return () => {
+      document.removeEventListener("fullscreenchange", restoreAfterFullscreen);
+      document.removeEventListener("webkitfullscreenchange", restoreAfterFullscreen);
+      window.removeEventListener("keydown", onVideoKeydown, { capture: true });
+      window.clearTimeout(videoControlsTimer);
+    };
+  });
+
+  function activeVideoElement() {
+    return imageOnly ? imageOnlyVideoElement : videoElement;
+  }
+
+  function isTextInput(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return false;
+    return (
+      target.isContentEditable ||
+      target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT"
+    );
+  }
+
+  function saveVideoPlayback(target: HTMLVideoElement | undefined) {
+    if (!target || !Number.isFinite(target.currentTime)) return;
+    const duration = Number.isFinite(target.duration) ? target.duration : videoUi.duration;
+    const currentTime =
+      Number.isFinite(duration) && duration > 0 && duration - target.currentTime < 0.25
+        ? duration
+        : target.currentTime;
+    videoUi = {
+      ...videoUi,
+      currentTime,
+      duration,
+      paused: target.paused,
+      muted: target.muted,
+      volume: target.volume,
+    };
+    videoPlayback = {
+      postId: viewer.post.id,
+      currentTime,
+      paused: target.paused,
+    };
+  }
+
+  function restoreVideoPlayback(target: HTMLVideoElement | undefined) {
+    if (!target || videoPlayback.postId !== viewer.post.id) return;
+    const time = videoPlayback.currentTime;
+    if (Number.isFinite(time) && Math.abs(target.currentTime - time) > 0.35) {
+      target.currentTime = time;
+    }
+    if (!videoPlayback.paused) {
+      void target.play().catch(() => {});
+    }
+  }
+
+  function syncVideoUi(target: HTMLVideoElement | undefined) {
+    if (!target) return;
+    videoUi = {
+      currentTime: Number.isFinite(target.currentTime) ? target.currentTime : 0,
+      duration: Number.isFinite(target.duration) ? target.duration : 0,
+      paused: target.paused,
+      muted: target.muted,
+      volume: target.volume,
+    };
+  }
+
+  async function toggleVideoPlayback(target: HTMLVideoElement | undefined) {
+    if (!target) return;
+    revealVideoControls();
+    if (target.paused) {
+      await target.play().catch(() => {});
+    } else {
+      target.pause();
+    }
+    saveVideoPlayback(target);
+  }
+
+  function setVideoRate(target: HTMLVideoElement | undefined, rate: number) {
+    if (!target) return;
+    revealVideoControls();
+    target.playbackRate = rate;
+    showVideoMenu = false;
+  }
+
+  function copyVideoUrl() {
+    const url = viewer.post.file?.url || "";
+    if (url) {
+      void navigator.clipboard?.writeText(url).catch(() => {});
+    }
+    showVideoMenu = false;
+  }
+
+  function seekVideo(target: HTMLVideoElement | undefined, value: string) {
+    if (!target) return;
+    revealVideoControls();
+    const next = Number(value);
+    if (!Number.isFinite(next)) return;
+    target.currentTime = next;
+    saveVideoPlayback(target);
+  }
+
+  function toggleVideoMute(target: HTMLVideoElement | undefined) {
+    if (!target) return;
+    revealVideoControls();
+    target.muted = !target.muted;
+    saveVideoPlayback(target);
+  }
+
+  function setVideoVolume(target: HTMLVideoElement | undefined, value: string) {
+    if (!target) return;
+    revealVideoControls();
+    const next = Number(value);
+    if (!Number.isFinite(next)) return;
+    target.volume = Math.min(1, Math.max(0, next));
+    target.muted = target.volume === 0;
+    saveVideoPlayback(target);
+  }
+
+  async function toggleVideoFullscreen(
+    target: HTMLVideoElement | undefined,
+    frame: HTMLDivElement | undefined,
+  ) {
+    if (!target || !frame) return;
+    revealVideoControls();
+    saveVideoPlayback(target);
+
+    if (appVideoFullscreen || document.fullscreenElement) {
+      await exitVideoFullscreen(target);
+      return;
+    }
+
+    const fullscreenFrame = frame as HTMLDivElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+
+    showVideoMenu = false;
+    appVideoFullscreen = true;
+    try {
+      if (fullscreenFrame.requestFullscreen) {
+        await fullscreenFrame.requestFullscreen();
+      } else if (fullscreenFrame.webkitRequestFullscreen) {
+        await fullscreenFrame.webkitRequestFullscreen();
+      }
+    } catch {
+      await setWindowFullscreen(true).catch(() => {});
+    }
+    window.setTimeout(() => restoreVideoPlayback(target), 80);
+  }
+
+  async function exitVideoFullscreen(target: HTMLVideoElement | undefined) {
+    showVideoMenu = false;
+    appVideoFullscreen = false;
+    if (document.fullscreenElement) {
+      await document.exitFullscreen().catch(() => {});
+    }
+    await setWindowFullscreen(false).catch(() => {});
+    window.setTimeout(() => restoreVideoPlayback(target), 80);
+  }
+
+  function revealVideoControls() {
+    showVideoControls = true;
+    window.clearTimeout(videoControlsTimer);
+    const target = activeVideoElement();
+    if (!target || target.paused || showVideoMenu) return;
+    videoControlsTimer = window.setTimeout(() => {
+      if (!showVideoMenu) {
+        showVideoControls = false;
+      }
+    }, 1800);
+  }
+
+  function hideVideoControls() {
+    window.clearTimeout(videoControlsTimer);
+    if (!showVideoMenu) {
+      showVideoControls = false;
+    }
+  }
+
+  function toggleVideoMenu() {
+    showVideoMenu = !showVideoMenu;
+    showVideoControls = true;
+  }
 </script>
 
 {#if imageOnly}
@@ -47,7 +294,51 @@
       </div>
     {:else if viewer.dataUrl && isVideoPost(viewer.post)}
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain" src={viewer.dataUrl} controls autoplay loop></video>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        bind:this={imageOnlyVideoFrameElement}
+        class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-room-floor' : 'absolute inset-4'}"
+        onclick={(event) => event.stopPropagation()}
+        onmousemove={revealVideoControls}
+        onmouseenter={revealVideoControls}
+        onmouseleave={hideVideoControls}
+      >
+        <video
+          bind:this={imageOnlyVideoElement}
+          class="h-full w-full object-contain"
+          src={viewer.dataUrl}
+          autoplay
+          loop
+          onclick={(event) => event.stopPropagation()}
+          ontimeupdate={() => saveVideoPlayback(imageOnlyVideoElement)}
+          onpause={() => saveVideoPlayback(imageOnlyVideoElement)}
+          onplay={() => {
+            saveVideoPlayback(imageOnlyVideoElement);
+            revealVideoControls();
+          }}
+          onvolumechange={() => syncVideoUi(imageOnlyVideoElement)}
+          onloadedmetadata={() => {
+            syncVideoUi(imageOnlyVideoElement);
+            restoreVideoPlayback(imageOnlyVideoElement);
+          }}
+        ></video>
+        <VideoControls
+          target={imageOnlyVideoElement}
+          frame={imageOnlyVideoFrameElement}
+          {videoUi}
+          showControls={showVideoControls}
+          showMenu={showVideoMenu}
+          onReveal={revealVideoControls}
+          onTogglePlayback={toggleVideoPlayback}
+          onSeek={seekVideo}
+          onToggleMute={toggleVideoMute}
+          onSetVolume={setVideoVolume}
+          onToggleFullscreen={toggleVideoFullscreen}
+          onToggleMenu={toggleVideoMenu}
+          onSetRate={setVideoRate}
+          onCopyUrl={copyVideoUrl}
+        />
+      </div>
     {:else if viewer.dataUrl}
       <img
         class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain"
@@ -94,47 +385,15 @@
     </div>
 
     <div class="grid min-h-0 grid-cols-[300px_minmax(0,1fr)]">
-      <aside class="min-h-0 overflow-auto border-r border-room-line bg-room-panel/40">
-      <section class="border-b border-room-line px-4 py-3">
-        <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
-          post
-        </div>
-        <div class="mt-1.5 font-mono text-[14px] tabular-nums text-room-text">
-          #{viewer.post.id}
-        </div>
-        <div class="mt-0.5 truncate text-[12px] text-room-text-mid">
-          {postLabel(viewer.post)}
-        </div>
-      </section>
+      <OriginalPostSidebar
+        post={viewer.post}
+        {username}
+        {onSearchTag}
+        {onOpenAccount}
+        {onUpdateTags}
+      />
 
-      {#each tagGroups(viewer.post) as [group, tags] (group)}
-        {#if tags.length > 0}
-          <section class="border-b border-room-line px-4 py-3">
-            <div class="mb-2 flex items-baseline justify-between">
-              <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
-                {group}
-              </div>
-              <div class="font-mono text-[10px] tabular-nums text-room-text-low">
-                {tags.length}
-              </div>
-            </div>
-            <div class="flex flex-wrap gap-1">
-              {#each tags as tag}
-                <button
-                  type="button"
-                  onclick={() => onSearchTag(tag)}
-                  class="inline-flex h-6 max-w-full items-center truncate rounded-[2px] border border-room-line bg-room-panel px-2 font-mono text-[10.5px] text-room-text-mid transition-colors duration-150 hover:border-room-accent hover:text-room-accent"
-                >
-                  {tag}
-                </button>
-              {/each}
-            </div>
-          </section>
-        {/if}
-      {/each}
-      </aside>
-
-      <div class="grid min-h-0 grid-rows-[minmax(0,1fr)_56px]">
+      <div class="grid min-h-0 grid-rows-[minmax(0,1fr)_minmax(220px,34vh)]">
         <div class="relative min-h-0 overflow-hidden">
           {#if viewer.loading}
             <span
@@ -147,13 +406,49 @@
             </div>
           {:else if viewer.dataUrl && isVideoPost(viewer.post)}
             <!-- svelte-ignore a11y_media_has_caption -->
-            <video
-              class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain"
-              src={viewer.dataUrl}
-              controls
-              autoplay
-              loop
-            ></video>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              bind:this={videoFrameElement}
+              class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-room-floor' : 'absolute inset-4'}"
+              onmousemove={revealVideoControls}
+              onmouseenter={revealVideoControls}
+              onmouseleave={hideVideoControls}
+            >
+              <video
+                bind:this={videoElement}
+                class="h-full w-full object-contain"
+                src={viewer.dataUrl}
+                autoplay
+                loop
+                ontimeupdate={() => saveVideoPlayback(videoElement)}
+                onpause={() => saveVideoPlayback(videoElement)}
+                onplay={() => {
+                  saveVideoPlayback(videoElement);
+                  revealVideoControls();
+                }}
+                onvolumechange={() => syncVideoUi(videoElement)}
+                onloadedmetadata={() => {
+                  syncVideoUi(videoElement);
+                  restoreVideoPlayback(videoElement);
+                }}
+              ></video>
+              <VideoControls
+                target={videoElement}
+                frame={videoFrameElement}
+                {videoUi}
+                showControls={showVideoControls}
+                showMenu={showVideoMenu}
+                onReveal={revealVideoControls}
+                onTogglePlayback={toggleVideoPlayback}
+                onSeek={seekVideo}
+                onToggleMute={toggleVideoMute}
+                onSetVolume={setVideoVolume}
+                onToggleFullscreen={toggleVideoFullscreen}
+                onToggleMenu={toggleVideoMenu}
+                onSetRate={setVideoRate}
+                onCopyUrl={copyVideoUrl}
+              />
+            </div>
           {:else if viewer.dataUrl}
             <button
               type="button"
@@ -171,56 +466,21 @@
           {/if}
         </div>
 
-        <section class="border-t border-room-line bg-room-panel/25 px-4 py-3">
-          <div class="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onclick={() => onToggleFavorite(viewer.post)}
-            disabled={favoritePending}
-            class="inline-flex h-8 items-center gap-1.5 rounded-[3px] border bg-room-panel px-3 font-mono text-[10.5px] uppercase tracking-[0.18em] transition-colors duration-150 disabled:opacity-50 {viewer.post.is_favorited
-              ? 'border-room-fav text-room-fav hover:bg-room-fav/10'
-              : 'border-room-line-strong text-room-text-mid hover:border-room-fav hover:text-room-fav'}"
-          >
-            <svg
-              class="size-3"
-              viewBox="0 0 24 24"
-              fill={viewer.post.is_favorited ? "currentColor" : "none"}
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path
-                d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-              />
-            </svg>
-            {viewer.post.is_favorited ? "favorited" : "favorite"}
-          </button>
-
-          <button
-            type="button"
-            onclick={() => onDownload(viewer.post)}
-            disabled={downloadPending || !viewer.post.file?.url}
-            class="inline-flex h-8 items-center gap-1.5 rounded-[3px] border border-room-line-strong bg-room-panel px-3 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-text-mid transition-colors duration-150 hover:border-room-accent hover:text-room-accent disabled:opacity-50"
-          >
-            {#if downloadPending}
-              <span
-                class="size-2.5 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
-                aria-hidden="true"
-              ></span>
-            {/if}
-            download
-          </button>
-
-          {#if !username}
-            <span class="font-mono text-[10px] text-room-text-low">sign in to favorite</span>
-          {/if}
-          {#if downloadStatus}
-            <span class="font-mono text-[10.5px] text-room-text-low">{downloadStatus}</span>
-          {/if}
-          </div>
-        </section>
+        <CommentsPanel
+          post={viewer.post}
+          {username}
+          {favoritePending}
+          {downloadPending}
+          {downloadStatus}
+          {comments}
+          {onToggleFavorite}
+          {onDownload}
+          {onCommentBodyChange}
+          {onSubmitComment}
+          {onRefreshComments}
+          {onOpenAccount}
+          {onHideComment}
+        />
       </div>
     </div>
   </div>

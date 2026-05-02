@@ -7,10 +7,13 @@
   import SearchHeader from "./components/SearchHeader.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import {
+    createComment,
     downloadFile,
     favoritePost,
+    fetchComments,
     fetchPreview,
     getAccount,
+    hideComment,
     mediaUrl,
     originalUrl,
     searchPosts,
@@ -18,9 +21,16 @@
     signOutAccount,
     thumbnailUrl,
     unfavoritePost,
+    updatePostTags,
   } from "./lib/e621";
   import { queryWithSort, sortModeFromQuery } from "./lib/search";
-  import type { OriginalViewer as OriginalViewerState, Post, Preset, SortMode } from "./lib/types";
+  import type {
+    CommentState,
+    OriginalViewer as OriginalViewerState,
+    Post,
+    Preset,
+    SortMode,
+  } from "./lib/types";
 
   const basePresets: Preset[] = [
     { label: "Hot", value: "order:rank" },
@@ -69,6 +79,15 @@
   let downloadStatus = $state("");
   let originalViewer = $state<OriginalViewerState | null>(null);
   let imageOnly = $state(false);
+  let comments = $state<CommentState>({
+    items: [],
+    loading: false,
+    error: null,
+    body: "",
+    submitting: false,
+    submitError: null,
+    hiding: {},
+  });
 
   let selectedPost = $derived(posts.find((post) => post.id === selectedId) ?? null);
   let presets = $derived(
@@ -262,6 +281,15 @@
     const url = originalUrl(post);
     downloadStatus = "";
     imageOnly = false;
+    comments = {
+      items: [],
+      loading: true,
+      error: null,
+      body: "",
+      submitting: false,
+      submitError: null,
+      hiding: {},
+    };
     originalViewer = {
       post,
       dataUrl: null,
@@ -273,6 +301,8 @@
     } else if (historyMode === "replace") {
       history.replaceState({ viewer: post.id }, "", "");
     }
+
+    void loadComments(post.id);
 
     if (!url) return;
 
@@ -301,8 +331,148 @@
   function closeOriginal(fromHistory = false) {
     originalViewer = null;
     imageOnly = false;
+    comments = {
+      items: [],
+      loading: false,
+      error: null,
+      body: "",
+      submitting: false,
+      submitError: null,
+      hiding: {},
+    };
     if (!fromHistory && history.state?.viewer) {
       history.back();
+    }
+  }
+
+  async function loadComments(postId: number) {
+    comments = {
+      ...comments,
+      loading: true,
+      error: null,
+    };
+
+    try {
+      const items = await fetchComments(postId);
+      if (originalViewer?.post.id === postId) {
+        comments = {
+          ...comments,
+          items,
+          loading: false,
+          error: null,
+        };
+      }
+    } catch (error) {
+      if (originalViewer?.post.id === postId) {
+        comments = {
+          ...comments,
+          items: [],
+          loading: false,
+          error: String(error),
+        };
+      }
+    }
+  }
+
+  function setCommentBody(value: string) {
+    comments = {
+      ...comments,
+      body: value,
+      submitError: null,
+    };
+  }
+
+  async function submitComment(post: Post) {
+    if (!username) {
+      openAccount();
+      return;
+    }
+    const body = comments.body.trim();
+    if (!body || comments.submitting) return;
+
+    comments = {
+      ...comments,
+      submitting: true,
+      submitError: null,
+    };
+
+    try {
+      const created = await createComment(post.id, body);
+      if (originalViewer?.post.id === post.id) {
+        const nextPost = {
+          ...originalViewer.post,
+          comment_count: (originalViewer.post.comment_count ?? comments.items.length) + 1,
+        };
+        originalViewer = {
+          ...originalViewer,
+          post: nextPost,
+        };
+        posts = posts.map((p) =>
+          p.id === post.id ? { ...p, comment_count: (p.comment_count ?? 0) + 1 } : p,
+        );
+        comments = {
+          ...comments,
+          items: [...comments.items, created],
+          body: "",
+          submitting: false,
+          submitError: null,
+        };
+      }
+    } catch (error) {
+      comments = {
+        ...comments,
+        submitting: false,
+        submitError: String(error),
+      };
+    }
+  }
+
+  async function updateTags(post: Post, tagStringDiff: string, editReason: string) {
+    if (!username) {
+      openAccount();
+      return;
+    }
+    const updated = await updatePostTags(post.id, tagStringDiff, editReason);
+    posts = posts.map((p) => (p.id === post.id ? updated : p));
+    if (originalViewer?.post.id === post.id) {
+      originalViewer = {
+        ...originalViewer,
+        post: updated,
+      };
+    }
+  }
+
+  async function hideOwnComment(commentId: number) {
+    if (!username || comments.hiding[commentId]) return;
+    comments = {
+      ...comments,
+      submitError: null,
+      hiding: {
+        ...comments.hiding,
+        [commentId]: true,
+      },
+    };
+    try {
+      const hidden = await hideComment(commentId);
+      comments = {
+        ...comments,
+        items: comments.items.map((comment) =>
+          comment.id === commentId ? { ...comment, ...hidden, is_hidden: true } : comment,
+        ),
+        hiding: {
+          ...comments.hiding,
+          [commentId]: false,
+        },
+      };
+    } catch (error) {
+      comments = {
+        ...comments,
+        submitError: String(error),
+        hiding: {
+          ...comments.hiding,
+          [commentId]: false,
+        },
+      };
     }
   }
 
@@ -492,11 +662,18 @@
       favoritePending={!!favoritePending[originalViewer.post.id]}
       downloadPending={!!downloadPending[originalViewer.post.id]}
       {downloadStatus}
+      {comments}
       onClose={closeOriginal}
       onToggleImageOnly={() => (imageOnly = !imageOnly)}
       onSearchTag={searchTag}
       onToggleFavorite={toggleFavorite}
       onDownload={downloadOriginal}
+      onCommentBodyChange={setCommentBody}
+      onSubmitComment={submitComment}
+      onRefreshComments={loadComments}
+      onOpenAccount={openAccount}
+      onUpdateTags={updateTags}
+      onHideComment={hideOwnComment}
     />
   {/if}
 

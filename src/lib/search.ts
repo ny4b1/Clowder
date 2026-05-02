@@ -19,6 +19,43 @@ export function looksLikeMetatag(value: string) {
   );
 }
 
+const tagCategoryPrefixes: Record<string, number> = {
+  general: 0,
+  artist: 1,
+  copyright: 3,
+  character: 4,
+  species: 5,
+  invalid: 6,
+  meta: 7,
+  lore: 8,
+};
+
+export function tagAutocompleteTarget(raw: string) {
+  const value = raw.replace(/^-/, "");
+  const match = /^([a-z_]+):(.*)$/i.exec(value);
+  if (!match) {
+    return {
+      term: value.replaceAll(" ", "_"),
+      category: null,
+      insertPrefix: "",
+      qualified: false,
+    };
+  }
+
+  const prefix = match[1].toLowerCase();
+  const category = tagCategoryPrefixes[prefix];
+  if (category === undefined) {
+    return null;
+  }
+
+  return {
+    term: match[2].replaceAll(" ", "_"),
+    category,
+    insertPrefix: `${prefix}:`,
+    qualified: true,
+  };
+}
+
 export function localMetatagSuggestions(raw: string): TagSuggestion[] {
   const negative = raw.startsWith("-");
   const value = raw.replace(/^-/, "").toLowerCase();

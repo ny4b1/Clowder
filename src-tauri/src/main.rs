@@ -11,7 +11,7 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use e621::{Client, Credentials, Post, Tag};
+use e621::{Client, Comment, Credentials, Post, Tag};
 use serde::Serialize;
 use tauri::State;
 use tauri::http::{
@@ -47,11 +47,12 @@ struct AccountResponse {
 #[tauri::command]
 async fn autocomplete_tags(
     term: String,
+    category: Option<u8>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Tag>, String> {
     let client = get_client(&state).await?;
     client
-        .autocomplete_tags(&term)
+        .autocomplete_tags(&term, category)
         .await
         .map_err(|err| format!("{err:#}"))
 }
@@ -183,6 +184,62 @@ async fn unfavorite_post(post_id: u64, state: State<'_, Arc<AppState>>) -> Resul
         .await
         .map_err(|err| format!("{err:#}"))?;
     Ok(false)
+}
+
+#[tauri::command]
+async fn fetch_comments(
+    post_id: u64,
+    limit: u32,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<Comment>, String> {
+    let client = get_client(&state).await?;
+    client
+        .comments(post_id, limit)
+        .await
+        .map_err(|err| format!("{err:#}"))
+}
+
+#[tauri::command]
+async fn create_comment(
+    post_id: u64,
+    body: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Comment, String> {
+    let client = get_client(&state).await?;
+    client
+        .create_comment(post_id, &body)
+        .await
+        .map_err(|err| format!("{err:#}"))
+}
+
+#[tauri::command]
+async fn update_post_tags(
+    post_id: u64,
+    tag_string_diff: String,
+    edit_reason: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Post, String> {
+    let client = get_client(&state).await?;
+    client
+        .update_post_tags(post_id, &tag_string_diff, &edit_reason)
+        .await
+        .map_err(|err| format!("{err:#}"))
+}
+
+#[tauri::command]
+async fn hide_comment(comment_id: u64, state: State<'_, Arc<AppState>>) -> Result<Comment, String> {
+    let client = get_client(&state).await?;
+    client
+        .hide_comment(comment_id)
+        .await
+        .map_err(|err| format!("{err:#}"))
+}
+
+#[tauri::command]
+fn set_window_fullscreen(window: tauri::Window, fullscreen: bool) -> Result<(), String> {
+    window
+        .set_fullscreen(fullscreen)
+        .map_err(|err| format!("{err:#}"))
 }
 
 async fn get_client(state: &State<'_, Arc<AppState>>) -> Result<Client, String> {
@@ -410,7 +467,12 @@ fn main() {
             sign_in,
             sign_out,
             favorite_post,
-            unfavorite_post
+            unfavorite_post,
+            fetch_comments,
+            create_comment,
+            update_post_tags,
+            hide_comment,
+            set_window_fullscreen
         ])
         .run(tauri::generate_context!())
         .expect("run tauri app");
