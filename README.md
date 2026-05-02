@@ -43,7 +43,8 @@ npm install
 npm run tauri build
 ```
 
-The packaged application will be available under `src-tauri/target/release/bundle/`.
+On macOS, this produces `.app` and `.dmg` bundles under
+`src-tauri/target/release/bundle/`. On Windows, it produces an NSIS installer.
 
 ### Run in development mode
 
