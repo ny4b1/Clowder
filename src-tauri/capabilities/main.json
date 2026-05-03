@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Permissions granted to the main Clowder window. Only the default core permissions are exposed; all backend functionality is reached through application-defined commands registered via tauri::generate_handler!.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}

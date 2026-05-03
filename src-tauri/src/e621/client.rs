@@ -18,6 +18,13 @@ use super::types::{
 const HOST: &str = "e621.net";
 const MAX_LIMIT: u32 = 320;
 const MIN_LIMIT: u32 = 8;
+const CREDENTIAL_DOMAINS: &[&str] = &["e621.net", "e926.net"];
+
+fn host_accepts_credentials(host: &str) -> bool {
+    CREDENTIAL_DOMAINS
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+}
 const USER_AGENT_VALUE: &str = concat!(
     "clowder/",
     env!("CARGO_PKG_VERSION"),
@@ -266,7 +273,9 @@ impl Client {
         if let Some(range) = range {
             req = req.header(RANGE, range);
         }
-        if let Some(creds) = self.auth() {
+        if host_accepts_credentials(&host)
+            && let Some(creds) = self.auth()
+        {
             req = req.basic_auth(&creds.username, Some(&creds.api_key));
         }
 
@@ -503,4 +512,46 @@ fn trim_body(body: &str) -> String {
         out.push_str("...");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_accepts_credentials_for_e621_apex() {
+        assert!(host_accepts_credentials("e621.net"));
+        assert!(host_accepts_credentials("e926.net"));
+    }
+
+    #[test]
+    fn host_accepts_credentials_for_subdomains() {
+        assert!(host_accepts_credentials("static1.e621.net"));
+        assert!(host_accepts_credentials("static2.e621.net"));
+        assert!(host_accepts_credentials("static1.e926.net"));
+        assert!(host_accepts_credentials("api.e621.net"));
+    }
+
+    #[test]
+    fn host_accepts_credentials_rejects_other_hosts() {
+        assert!(!host_accepts_credentials(""));
+        assert!(!host_accepts_credentials("example.com"));
+        assert!(!host_accepts_credentials("e621.net.evil.com"));
+        assert!(!host_accepts_credentials("notrealle621.net"));
+        assert!(!host_accepts_credentials("e621-net"));
+    }
+
+    #[test]
+    fn trim_body_truncates_long_content() {
+        let long = "x".repeat(500);
+        let trimmed = trim_body(&long);
+        assert!(trimmed.ends_with("..."));
+        assert_eq!(trimmed.len(), 243);
+    }
+
+    #[test]
+    fn trim_body_keeps_short_content() {
+        assert_eq!(trim_body("hello"), "hello");
+        assert_eq!(trim_body("  hello\nworld  "), "hello world");
+    }
 }

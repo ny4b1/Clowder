@@ -11,7 +11,6 @@
     downloadFile,
     favoritePost,
     fetchComments,
-    fetchPreview,
     getAccount,
     hideComment,
     mediaUrl,
@@ -238,8 +237,8 @@
     }
 
     try {
-      const result = await fetchPreview(url);
-      previews[post.id] = result.data_url;
+      const proxied = await mediaUrl(url);
+      previews[post.id] = proxied;
     } catch {
       markPreviewFailed(post.id);
     }
