@@ -7,11 +7,6 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.3.0] — 2026-05-03
 
-Security-focused release. Hardens the Tauri permission model, locks down
-outbound network targets, eliminates a credential-disclosure path in the
-media proxy, and replaces the in-memory base64 preview pipeline with a
-streaming proxy. Adds a unit test suite and a GitHub Actions CI pipeline.
-
 ### Security
 
 - Defined Tauri capabilities and a Content Security Policy.
