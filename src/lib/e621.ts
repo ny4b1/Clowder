@@ -5,10 +5,6 @@ export function searchPosts(tags: string, page: number, limit: number) {
   return invoke<SearchResponse>("search_posts", { tags, page, limit });
 }
 
-export function fetchPreview(url: string) {
-  return invoke<{ data_url: string }>("fetch_preview", { url });
-}
-
 export function mediaUrl(url: string) {
   return invoke<string>("media_url", { url });
 }

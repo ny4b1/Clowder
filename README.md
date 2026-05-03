@@ -32,7 +32,7 @@ instructions below.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 20 or newer
+- [Node.js](https://nodejs.org/) 24 LTS or newer
 - [Rust](https://rustup.rs/) (stable toolchain)
 - Platform dependencies for [Tauri 2](https://v2.tauri.app/start/prerequisites/)
 

@@ -10,9 +10,14 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data: blob: asset: http://asset.localhost clowder-media: http://clowder-media.localhost; media-src 'self' data: blob: asset: http://asset.localhost clowder-media: http://clowder-media.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; img-src 'self' data: blob: asset: http://asset.localhost clowder-media: http://clowder-media.localhost; media-src 'self' data: blob: asset: http://asset.localhost clowder-media: http://clowder-media.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'none'; base-uri 'self'"
+    },
     "windows": [
       {
+        "label": "main",
         "title": "Clowder",
         "width": 1200,
         "height": 820,
