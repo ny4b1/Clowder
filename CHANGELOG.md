@@ -9,82 +9,54 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
-- Defined Tauri capabilities and a Content Security Policy.
-  - Added `src-tauri/capabilities/main.json` scoping permissions to the
-    main window with only `core:default`.
-  - Disabled `withGlobalTauri`, removing the `window.__TAURI__` global
-    that exposed every IPC command to any script in the webview.
-  - Added a production CSP and a separate dev CSP in `tauri.conf.json`
-    (`script-src 'self'`, `object-src 'none'`, `base-uri 'self'`,
-    `frame-ancestors 'none'`, with explicit allow-list for
-    `clowder-media:` and `data:` on `img-src` / `media-src`).
+- Locked down the Tauri permission model.
+  - Defined an explicit capabilities file scoping the main window to default core permissions only.
+  - Disabled the global Tauri injection so the webview no longer exposes IPC on `window`.
+  - Added a strict Content Security Policy in production with a separate, looser policy for dev.
 - Restricted outbound media URLs to e621/e926 over HTTPS only.
-  - Added a `validate_remote_url` helper enforcing HTTPS and a host
-    whitelist (`e621.net`, `e926.net`, and their `static1` / `static2`
-    CDNs).
-  - Applied at four call sites (`media_url`, `download_file`, the
-    `clowder-media://` URI scheme handler, and the previous
-    `fetch_preview` site) for defense in depth.
-- Isolated API credentials from non-credential domains.
-  - The reqwest client used by `download_media` previously attached
-    HTTP Basic Auth to every host. A new `host_accepts_credentials`
-    predicate now restricts authentication to `e621.net` and `e926.net`
-    (apex and subdomains only).
-- Strengthened filename sanitization for downloads.
+  - Thumbnail, preview, full-resolution, and download URLs are now validated against a host whitelist before any network call.
+  - Plain `http://` is no longer accepted; only HTTPS.
+  - The `clowder-media://` proxy re-validates after token decoding for defense in depth.
+- Stopped attaching e621 credentials to non-e621 hosts.
+  - HTTP Basic Auth is now scoped to `e621.net` and `e926.net` (apex and subdomains only).
+- Strengthened download filename sanitization.
   - Applied Unicode NFC normalization.
-  - Replaced visually-confusable slash variants (`U+2044`, `U+2215`,
-    `U+29F8`, `U+29F5`, `U+FF0F`, `U+FF3C`).
-  - Prefixed Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`,
-    `COM1`–`COM9`, `LPT1`–`LPT9`) with `_`.
-  - Trimmed trailing dots and spaces; capped at 200 bytes on a UTF-8
-    character boundary.
+  - Replaced visually-confusable slash variants used in spoofed filenames.
+  - Prefixed Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) with `_`.
+  - Trimmed trailing dots and spaces; capped length at 200 bytes on a UTF-8 boundary.
 - Stopped leaking internal error chains to the UI.
-  - Added a `report` helper that logs the full anyhow chain via
-    `tracing::error!` and only passes through messages from a curated
-    user-actionable allow-list (e.g. *"login required"*, *"invalid
-    username or API key"*).
-  - Other failures now surface as concise per-operation messages such
-    as *"Search failed. Please try again."*
+  - Internal errors are logged with full context.
+  - Toasts now show concise, user-friendly messages such as *"Search failed. Please try again."* or *"Sign in failed."*
 
 ### Changed
 
-- Image previews now stream through `clowder-media://` instead of being
-  delivered as base64 data URLs.
-  - Peak memory per preview drops from roughly 3× the original bytes
-    (source + base64 expansion + IPC copy) to ~1×.
-  - Eliminates base64 encode/decode CPU cost and improves first-paint
-    time.
-- Initialized `tracing-subscriber` at startup.
-  - Default filter `clowder=info,warn`; override with the `CLOWDER_LOG`
-    environment variable.
-- Bumped development requirement to Node 24 LTS in `README.md`.
+- Image previews now stream through the in-app media proxy instead of being delivered as base64 data URLs.
+  - Peak memory per preview drops from roughly 3× the original bytes to ~1×.
+  - Eliminates base64 encode/decode cost and improves first-paint time.
+- Initialized structured logging at startup.
+  - Default filter shows `info` and `warn` events from Clowder.
+  - Override via the `CLOWDER_LOG` environment variable.
+- Bumped development requirement to Node 24 LTS.
 
 ### Added
 
-- 24 unit tests covering `sanitize_filename`, `capped_video_range`,
-  `validate_remote_url`, `is_user_actionable`, `mime_for_url`,
-  `is_video_url`, `host_accepts_credentials`, and `trim_body`. Run with
-  `cargo test --all-targets`.
-- GitHub Actions CI in `.github/workflows/ci.yml`:
-  - Frontend build (Vite production build on Node 24).
-  - Rust check (`cargo fmt --check`, `cargo clippy --all-targets --
-    -D warnings`, `cargo test --all-targets`) with cached dependencies
-    and Tauri system libraries pre-installed.
-  - Advisory `npm audit` and `cargo audit` job (non-blocking).
-- Dependabot config in `.github/dependabot.yml` scheduling weekly Cargo
-  and npm dependency updates plus monthly GitHub Actions bumps.
+- Unit tests for URL validation, filename sanitization, video range capping, MIME guessing, error message classification, and credential host matching.
+- GitHub Actions CI.
+  - Frontend production build.
+  - Rust formatting, lint, and test runs.
+  - Advisory `npm audit` and `cargo audit` (non-blocking).
+- Dependabot config for weekly Cargo and npm updates and monthly GitHub Actions bumps.
 
 ### Removed
 
-- `fetch_preview` Tauri command and its `PreviewResponse` payload.
-  Frontend callers must use `mediaUrl(url)` instead.
+- Removed the `fetch_preview` Tauri command. Frontend callers now use the existing `media_url` command.
 
 ### Validation
 
 - Verified frontend production build with `npm run build`.
 - Verified Rust formatting with `cargo fmt --check`.
 - Verified Rust lints with `cargo clippy --all-targets -- -D warnings`.
-- Verified Rust unit tests with `cargo test --all-targets` (24 passed).
+- Verified Rust unit tests with `cargo test --all-targets`.
 
 ## [0.2.0] — 2026-05-02
 
