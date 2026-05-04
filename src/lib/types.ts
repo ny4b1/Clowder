@@ -93,3 +93,42 @@ export type OriginalViewer = {
   loading: boolean;
   error: string | null;
 };
+
+export type DohProvider = "cloudflare" | "google" | "quad9" | "ad_guard";
+
+export type DownloadSettings = {
+  directory: string | null;
+  filename_template: string;
+};
+
+export type PlaybackSettings = {
+  autoplay: boolean;
+  remember_volume: boolean;
+  video_chunk_mb: number;
+};
+
+export type Theme = "system" | "dark" | "light";
+
+export type MotionPreference = "system" | "always" | "never";
+
+export type AppearanceSettings = {
+  theme: Theme;
+  motion: MotionPreference;
+  grid_min_tile_px: number;
+};
+
+export type Settings = {
+  doh_provider: DohProvider;
+  fail_closed_ech: boolean;
+  downloads: DownloadSettings;
+  playback: PlaybackSettings;
+  appearance: AppearanceSettings;
+};
+
+export type SettingsSection =
+  | "account"
+  | "network"
+  | "downloads"
+  | "playback"
+  | "appearance"
+  | "about";

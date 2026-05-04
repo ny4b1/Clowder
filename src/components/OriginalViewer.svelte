@@ -5,7 +5,9 @@
   import VideoControls from "./VideoControls.svelte";
   import type { CommentState, OriginalViewer as OriginalViewerState, Post } from "../lib/types";
   import { isVideoPost } from "../lib/e621";
+  import { playbackMemory } from "../lib/playback.svelte";
   import { dimsLabel, postLabel } from "../lib/search";
+  import { settingsStore } from "../lib/settings-store.svelte";
   import { setWindowFullscreen } from "../lib/window";
 
   type Props = {
@@ -137,6 +139,10 @@
       currentTime,
       paused: target.paused,
     };
+    if (settingsStore.current.playback.remember_volume) {
+      playbackMemory.volume = target.volume;
+      playbackMemory.muted = target.muted;
+    }
   }
 
   function restoreVideoPlayback(target: HTMLVideoElement | undefined) {
@@ -159,6 +165,18 @@
       muted: target.muted,
       volume: target.volume,
     };
+  }
+
+  function applyRememberedAudio(target: HTMLVideoElement | undefined) {
+    if (!target) return;
+    if (!settingsStore.current.playback.remember_volume) return;
+    const volume = Math.min(1, Math.max(0, playbackMemory.volume));
+    if (Number.isFinite(volume) && Math.abs(target.volume - volume) > 0.001) {
+      target.volume = volume;
+    }
+    if (target.muted !== playbackMemory.muted) {
+      target.muted = playbackMemory.muted;
+    }
   }
 
   async function toggleVideoPlayback(target: HTMLVideoElement | undefined) {
@@ -307,7 +325,7 @@
           bind:this={imageOnlyVideoElement}
           class="h-full w-full object-contain"
           src={viewer.dataUrl}
-          autoplay
+          autoplay={settingsStore.current.playback.autoplay}
           loop
           onclick={(event) => event.stopPropagation()}
           ontimeupdate={() => saveVideoPlayback(imageOnlyVideoElement)}
@@ -318,6 +336,7 @@
           }}
           onvolumechange={() => syncVideoUi(imageOnlyVideoElement)}
           onloadedmetadata={() => {
+            applyRememberedAudio(imageOnlyVideoElement);
             syncVideoUi(imageOnlyVideoElement);
             restoreVideoPlayback(imageOnlyVideoElement);
           }}
@@ -418,7 +437,7 @@
                 bind:this={videoElement}
                 class="h-full w-full object-contain"
                 src={viewer.dataUrl}
-                autoplay
+                autoplay={settingsStore.current.playback.autoplay}
                 loop
                 ontimeupdate={() => saveVideoPlayback(videoElement)}
                 onpause={() => saveVideoPlayback(videoElement)}
@@ -428,6 +447,7 @@
                 }}
                 onvolumechange={() => syncVideoUi(videoElement)}
                 onloadedmetadata={() => {
+                  applyRememberedAudio(videoElement);
                   syncVideoUi(videoElement);
                   restoreVideoPlayback(videoElement);
                 }}
