@@ -58,7 +58,10 @@
       </div>
     </div>
   {:else}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] gap-2">
+    <div
+      class="grid gap-2"
+      style="grid-template-columns: repeat(auto-fill, minmax(var(--clowder-tile-min, 176px), 1fr));"
+    >
       {#each posts as post (post.id)}
         {@const isSelected = selectedId === post.id}
         <button

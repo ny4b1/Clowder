@@ -1,6 +1,6 @@
 {
   "name": "clowder",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -14,7 +14,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.11.0"
+    "@tauri-apps/api": "2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.0.0",

@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import AccountDialog from "./components/AccountDialog.svelte";
   import OriginalViewer from "./components/OriginalViewer.svelte";
   import PostGrid from "./components/PostGrid.svelte";
   import PostSidebar from "./components/PostSidebar.svelte";
   import SearchHeader from "./components/SearchHeader.svelte";
+  import SettingsDialog from "./components/SettingsDialog.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import {
     createComment,
@@ -23,11 +23,14 @@
     updatePostTags,
   } from "./lib/e621";
   import { queryWithSort, sortModeFromQuery } from "./lib/search";
+  import { settingsStore } from "./lib/settings-store.svelte";
+  import { applyFilenameTemplate } from "./lib/template";
   import type {
     CommentState,
     OriginalViewer as OriginalViewerState,
     Post,
     Preset,
+    SettingsSection,
     SortMode,
   } from "./lib/types";
 
@@ -68,7 +71,8 @@
   }
 
   let username = $state<string | null>(null);
-  let showAccount = $state(false);
+  let showSettings = $state(false);
+  let settingsSection = $state<SettingsSection>("account");
   let usernameInput = $state("");
   let apiKeyInput = $state("");
   let accountStatus = $state("");
@@ -95,16 +99,53 @@
       : [...basePresets, { label: "Favorites", value: "", requiresAccount: true }],
   );
 
+  let systemPrefersLight = $state(false);
+  let systemPrefersReducedMotion = $state(false);
+
   onMount(() => {
     void loadAccount();
+    void settingsStore.load();
     window.addEventListener("keydown", onWindowKeydown);
     window.addEventListener("popstate", onPopState);
     window.addEventListener("mouseup", onMouseNavButton);
+
+    const lightMq = window.matchMedia("(prefers-color-scheme: light)");
+    const motionMq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    systemPrefersLight = lightMq.matches;
+    systemPrefersReducedMotion = motionMq.matches;
+    const onLight = (event: MediaQueryListEvent) => (systemPrefersLight = event.matches);
+    const onMotion = (event: MediaQueryListEvent) => (systemPrefersReducedMotion = event.matches);
+    lightMq.addEventListener("change", onLight);
+    motionMq.addEventListener("change", onMotion);
+
     return () => {
       window.removeEventListener("keydown", onWindowKeydown);
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("mouseup", onMouseNavButton);
+      lightMq.removeEventListener("change", onLight);
+      motionMq.removeEventListener("change", onMotion);
     };
+  });
+
+  $effect(() => {
+    const appearance = settingsStore.current.appearance;
+    const root = document.documentElement;
+
+    const resolvedTheme =
+      appearance.theme === "system" ? (systemPrefersLight ? "light" : "dark") : appearance.theme;
+    if (resolvedTheme === "light") {
+      root.dataset.theme = "light";
+    } else {
+      delete root.dataset.theme;
+    }
+
+    if (appearance.motion === "system") {
+      delete root.dataset.motion;
+    } else {
+      root.dataset.motion = appearance.motion;
+    }
+
+    root.style.setProperty("--clowder-tile-min", `${appearance.grid_min_tile_px}px`);
   });
 
   function onWindowKeydown(event: KeyboardEvent) {
@@ -114,7 +155,7 @@
     }
 
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    if (showAccount || isTextInput(event.target)) return;
+    if (showSettings || isTextInput(event.target)) return;
     event.preventDefault();
     moveSelection(event.key === "ArrowRight" ? 1 : -1, !!originalViewer);
   }
@@ -174,14 +215,14 @@
       imageOnly = false;
     } else if (originalViewer) {
       closeOriginal(fromHistory);
-    } else if (showAccount && !accountSaving) {
-      closeAccount();
+    } else if (showSettings && !accountSaving) {
+      closeSettings();
     }
   }
 
   function onBackdropClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {
-      closeAccount();
+      closeSettings();
     }
   }
 
@@ -258,7 +299,7 @@
 
   function applyPreset(preset: Preset) {
     if (preset.requiresAccount) {
-      openAccount();
+      openSettings("account");
       return;
     }
 
@@ -388,7 +429,7 @@
 
   async function submitComment(post: Post) {
     if (!username) {
-      openAccount();
+      openSettings("account");
       return;
     }
     const body = comments.body.trim();
@@ -433,7 +474,7 @@
 
   async function updateTags(post: Post, tagStringDiff: string, editReason: string) {
     if (!username) {
-      openAccount();
+      openSettings("account");
       return;
     }
     const updated = await updatePostTags(post.id, tagStringDiff, editReason);
@@ -487,16 +528,17 @@
     void search();
   }
 
-  function openAccount() {
+  function openSettings(section: SettingsSection = "account") {
     usernameInput = username ?? "";
     apiKeyInput = "";
     accountStatus = "";
-    showAccount = true;
+    settingsSection = section;
+    showSettings = true;
   }
 
-  function closeAccount() {
+  function closeSettings() {
     if (accountSaving) return;
-    showAccount = false;
+    showSettings = false;
     accountStatus = "";
   }
 
@@ -514,7 +556,7 @@
       const result = await signIn(u, k);
       username = result.username;
       apiKeyInput = "";
-      showAccount = false;
+      showSettings = false;
       accountStatus = "";
     } catch (error) {
       accountStatus = String(error);
@@ -530,7 +572,7 @@
       await signOutAccount();
       username = null;
       apiKeyInput = "";
-      showAccount = false;
+      showSettings = false;
       if (activePreset?.startsWith("fav:")) {
         applyPreset(basePresets[0]);
       }
@@ -543,7 +585,7 @@
 
   async function toggleFavorite(post: Post) {
     if (!username) {
-      openAccount();
+      openSettings("account");
       return;
     }
     if (favoritePending[post.id]) return;
@@ -596,9 +638,9 @@
     downloadStatus = "downloading";
 
     try {
-      const artist = post.tags?.artist?.[0] || "unknown_artist";
-      const ext = post.file?.ext || "jpg";
-      const filename = `${artist}_${post.id}.${ext}`;
+      const template =
+        settingsStore.current.downloads.filename_template.trim() || "{artist}_{id}.{ext}";
+      const filename = applyFilenameTemplate(template, post);
       const path = await downloadFile(url, filename);
       downloadStatus = `saved ${path}`;
     } catch (error) {
@@ -625,7 +667,8 @@
     {hasNextPage}
     onQueryChange={setQuery}
     onSearch={search}
-    onOpenAccount={openAccount}
+    onOpenAccount={() => openSettings("account")}
+    onOpenSettings={() => openSettings("network")}
     onPageChange={goToPage}
   />
 
@@ -675,20 +718,21 @@
       onCommentBodyChange={setCommentBody}
       onSubmitComment={submitComment}
       onRefreshComments={loadComments}
-      onOpenAccount={openAccount}
+      onOpenAccount={() => openSettings("account")}
       onUpdateTags={updateTags}
       onHideComment={hideOwnComment}
     />
   {/if}
 
-  {#if showAccount}
-    <AccountDialog
+  {#if showSettings}
+    <SettingsDialog
       {username}
+      initialSection={settingsSection}
       {usernameInput}
       {apiKeyInput}
       {accountStatus}
       {accountSaving}
-      onClose={closeAccount}
+      onClose={closeSettings}
       onBackdropClick={onBackdropClick}
       onSubmit={submitSignIn}
       onSignOut={signOut}

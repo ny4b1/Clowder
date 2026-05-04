@@ -17,6 +17,20 @@
   --color-room-fav: #c89065;
 }
 
+:root[data-theme="light"] {
+  --color-room-floor: #ffffff;
+  --color-room-bg: #f5f5f7;
+  --color-room-panel: #ffffff;
+  --color-room-panel-hi: #ebebee;
+  --color-room-line: #e0e0e3;
+  --color-room-line-strong: #c2c2c6;
+  --color-room-text: #1c1c1e;
+  --color-room-text-mid: #5c5c60;
+  --color-room-text-low: #9c9ca0;
+  --color-room-accent: #4a7793;
+  --color-room-fav: #b06a3e;
+}
+
 html,
 body,
 #app {
@@ -70,4 +84,24 @@ a {
 ::selection {
   background: rgba(158, 184, 201, 0.25);
   color: var(--color-room-text);
+}
+
+:root[data-motion="never"] *,
+:root[data-motion="never"] *::before,
+:root[data-motion="never"] *::after {
+  animation-duration: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="always"]) *,
+  :root:not([data-motion="always"]) *::before,
+  :root:not([data-motion="always"]) *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -2,15 +2,16 @@
 
 mod credentials;
 mod e621;
+mod settings;
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use e621::{Client, Comment, Credentials, Post, Tag};
 use serde::Serialize;
-use tauri::State;
+use settings::Settings;
 use tauri::http::{
     Response, StatusCode,
     header::{
@@ -18,6 +19,7 @@ use tauri::http::{
         CONTENT_RANGE, CONTENT_TYPE, RANGE,
     },
 };
+use tauri::{Manager, State};
 use tokio::sync::Mutex;
 
 const ALLOWED_MEDIA_HOSTS: &[&str] = &[
@@ -73,9 +75,18 @@ fn report(operation: &'static str, fallback: &'static str, err: anyhow::Error) -
     }
 }
 
-#[derive(Default)]
 struct AppState {
     client: Mutex<Option<Client>>,
+    settings: RwLock<Settings>,
+}
+
+impl AppState {
+    fn new(settings: Settings) -> Self {
+        Self {
+            client: Mutex::new(None),
+            settings: RwLock::new(settings),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -143,7 +154,14 @@ async fn download_file(
         .download_bytes(parsed.as_str())
         .await
         .map_err(|err| report("download_file", "Download failed.", err))?;
-    let path = unique_download_path(&filename)
+    let custom_dir = state
+        .settings
+        .read()
+        .expect("settings lock")
+        .downloads
+        .directory
+        .clone();
+    let path = unique_download_path(&filename, custom_dir.as_deref())
         .map_err(|err| report("download_file_path", "Could not allocate a file name.", err))?;
     fs::write(&path, bytes).map_err(|err| {
         let chain = format!("{err:#}");
@@ -268,6 +286,35 @@ async fn hide_comment(comment_id: u64, state: State<'_, Arc<AppState>>) -> Resul
 }
 
 #[tauri::command]
+fn get_settings(state: State<'_, Arc<AppState>>) -> Result<Settings, String> {
+    Ok(state.settings.read().expect("settings lock").clone())
+}
+
+#[tauri::command]
+async fn update_settings(
+    new_settings: Settings,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Settings, String> {
+    settings::save(&app, &new_settings)
+        .map_err(|err| report("settings_save", "Failed to save settings.", err))?;
+
+    let invalidate_client = {
+        let mut guard = state.settings.write().expect("settings lock");
+        let changed = guard.doh_provider != new_settings.doh_provider
+            || guard.fail_closed_ech != new_settings.fail_closed_ech;
+        *guard = new_settings.clone();
+        changed
+    };
+
+    if invalidate_client {
+        *state.client.lock().await = None;
+    }
+
+    Ok(new_settings)
+}
+
+#[tauri::command]
 fn set_window_fullscreen(window: tauri::Window, fullscreen: bool) -> Result<(), String> {
     window.set_fullscreen(fullscreen).map_err(|err| {
         let chain = format!("{err:#}");
@@ -286,7 +333,12 @@ async fn get_client_inner(state: &Arc<AppState>) -> Result<Client, String> {
         return Ok(client.clone());
     }
 
-    let client = Client::new(false)
+    let (doh_provider, fail_closed_ech) = {
+        let s = state.settings.read().expect("settings lock");
+        (s.doh_provider, s.fail_closed_ech)
+    };
+
+    let client = Client::new(doh_provider, fail_closed_ech)
         .await
         .map_err(|err| report("client_init", "Could not initialize HTTP client.", err))?;
 
@@ -322,11 +374,17 @@ async fn fetch_media_response(
         String::from_utf8(decoded).map_err(|err| anyhow::anyhow!("decode media URL: {err}"))?;
     let parsed = validate_remote_url(&url).map_err(|err| anyhow::anyhow!(err))?;
     let url = parsed.as_str().to_string();
+    let max_chunk = state
+        .settings
+        .read()
+        .expect("settings lock")
+        .playback
+        .video_chunk_bytes();
     let range = request
         .headers()
         .get(RANGE)
         .and_then(|value| value.to_str().ok())
-        .and_then(|range| media_range(&url, range));
+        .and_then(|range| media_range(&url, range, max_chunk));
 
     let client = get_client_inner(&state)
         .await
@@ -364,25 +422,24 @@ async fn fetch_media_response(
         .map_err(|err| anyhow::anyhow!("build media response: {err}"))
 }
 
-fn media_range(url: &str, range: &str) -> Option<String> {
+fn media_range(url: &str, range: &str, max_chunk: u64) -> Option<String> {
     if is_video_url(url) {
-        return capped_video_range(range);
+        return capped_video_range(range, max_chunk);
     }
     Some(range.trim().to_string())
 }
 
-fn capped_video_range(range: &str) -> Option<String> {
-    const MAX_CHUNK: u64 = 2 * 1024 * 1024;
+fn capped_video_range(range: &str, max_chunk: u64) -> Option<String> {
     let range = range.trim();
     let value = range.strip_prefix("bytes=")?;
     let first = value.split(',').next()?.trim();
     let (start, end) = first.split_once('-')?;
     if start.is_empty() {
-        return Some(format!("bytes=-{MAX_CHUNK}"));
+        return Some(format!("bytes=-{max_chunk}"));
     }
     let start = start.parse::<u64>().ok()?;
     let requested_end = end.parse::<u64>().ok();
-    let capped_end = start + MAX_CHUNK - 1;
+    let capped_end = start.saturating_add(max_chunk.saturating_sub(1));
     let end = requested_end.map_or(capped_end, |end| end.min(capped_end));
     Some(format!("bytes={start}-{end}"))
 }
@@ -417,8 +474,11 @@ fn mime_for_url(url: &str) -> &'static str {
     }
 }
 
-fn unique_download_path(filename: &str) -> anyhow::Result<PathBuf> {
-    let downloads = downloads_dir()?;
+fn unique_download_path(filename: &str, custom_dir: Option<&str>) -> anyhow::Result<PathBuf> {
+    let downloads = match custom_dir {
+        Some(d) if !d.trim().is_empty() => PathBuf::from(d),
+        _ => downloads_dir()?,
+    };
     fs::create_dir_all(&downloads)?;
 
     let safe = sanitize_filename(filename);
@@ -580,30 +640,46 @@ mod tests {
     }
 
     #[test]
-    fn capped_video_range_caps_to_two_megabytes() {
+    fn capped_video_range_caps_to_configured_chunk() {
+        const MB2: u64 = 2 * 1024 * 1024;
         assert_eq!(
-            capped_video_range("bytes=0-").as_deref(),
+            capped_video_range("bytes=0-", MB2).as_deref(),
             Some("bytes=0-2097151")
         );
         assert_eq!(
-            capped_video_range("bytes=0-9999999").as_deref(),
+            capped_video_range("bytes=0-9999999", MB2).as_deref(),
             Some("bytes=0-2097151")
         );
         assert_eq!(
-            capped_video_range("bytes=100-200").as_deref(),
+            capped_video_range("bytes=100-200", MB2).as_deref(),
             Some("bytes=100-200")
         );
         assert_eq!(
-            capped_video_range("bytes=-500").as_deref(),
+            capped_video_range("bytes=-500", MB2).as_deref(),
             Some("bytes=-2097152")
+        );
+
+        const MB8: u64 = 8 * 1024 * 1024;
+        assert_eq!(
+            capped_video_range("bytes=0-", MB8).as_deref(),
+            Some("bytes=0-8388607")
         );
     }
 
     #[test]
+    fn capped_video_range_handles_overflow() {
+        const MB2: u64 = 2 * 1024 * 1024;
+        let near_max = u64::MAX - 100;
+        let result = capped_video_range(&format!("bytes={near_max}-"), MB2).unwrap();
+        assert_eq!(result, format!("bytes={near_max}-{}", u64::MAX));
+    }
+
+    #[test]
     fn capped_video_range_rejects_invalid_input() {
-        assert!(capped_video_range("bogus").is_none());
-        assert!(capped_video_range("bytes=").is_none());
-        assert!(capped_video_range("bytes=abc-def").is_none());
+        const MB2: u64 = 2 * 1024 * 1024;
+        assert!(capped_video_range("bogus", MB2).is_none());
+        assert!(capped_video_range("bytes=", MB2).is_none());
+        assert!(capped_video_range("bytes=abc-def", MB2).is_none());
     }
 
     #[test]
@@ -675,19 +751,19 @@ mod tests {
 
 fn main() {
     init_tracing();
-    let app_state = Arc::new(AppState::default());
-    let media_state = app_state.clone();
     tauri::Builder::default()
-        .manage(app_state)
-        .register_asynchronous_uri_scheme_protocol(
-            "clowder-media",
-            move |_ctx, request, responder| {
-                let state = media_state.clone();
-                tauri::async_runtime::spawn(async move {
-                    responder.respond(serve_media_request(request, state).await);
-                });
-            },
-        )
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let loaded = settings::load(app.handle());
+            app.manage(Arc::new(AppState::new(loaded)));
+            Ok(())
+        })
+        .register_asynchronous_uri_scheme_protocol("clowder-media", |ctx, request, responder| {
+            let state = ctx.app_handle().state::<Arc<AppState>>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(serve_media_request(request, state).await);
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             autocomplete_tags,
             search_posts,
@@ -702,6 +778,8 @@ fn main() {
             create_comment,
             update_post_tags,
             hide_comment,
+            get_settings,
+            update_settings,
             set_window_fullscreen
         ])
         .run(tauri::generate_context!())

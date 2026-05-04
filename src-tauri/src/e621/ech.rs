@@ -8,8 +8,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-const DOH_URL: &str = "https://cloudflare-dns.com/dns-query";
-const DOH_HOST: &str = "cloudflare-dns.com";
+use crate::settings::DohProvider;
+
 const HTTPS_RR: u16 = 65;
 const A_RR: u16 = 1;
 const AAAA_RR: u16 = 28;
@@ -34,8 +34,9 @@ pub async fn configure_ech_client(
     builder: reqwest::ClientBuilder,
     host: &str,
     fail_closed: bool,
+    provider: DohProvider,
 ) -> Result<ConfiguredClientBuilder> {
-    match fetch_ech_dns_config(host).await {
+    match fetch_ech_dns_config(host, provider).await {
         Ok(cfg) => match build_ech_tls_config(&cfg) {
             Ok(tls) => {
                 let builder = builder.use_preconfigured_tls(tls);
@@ -69,11 +70,11 @@ pub async fn configure_ech_client(
     }
 }
 
-async fn fetch_ech_dns_config(host: &str) -> Result<EchDnsConfig> {
-    let doh = doh_client()?;
+async fn fetch_ech_dns_config(host: &str, provider: DohProvider) -> Result<EchDnsConfig> {
+    let doh = doh_client(provider)?;
     let message = build_query(host, HTTPS_RR)?;
     let response = doh
-        .post(DOH_URL)
+        .post(provider.url())
         .header(CONTENT_TYPE, "application/dns-message")
         .header(ACCEPT, "application/dns-message")
         .body(message)
@@ -89,18 +90,12 @@ async fn fetch_ech_dns_config(host: &str) -> Result<EchDnsConfig> {
     parse_https_response(&response).context("parse DoH HTTPS response")
 }
 
-fn doh_client() -> Result<reqwest::Client> {
-    let addrs = [
-        SocketAddr::from(([1, 1, 1, 1], 443)),
-        SocketAddr::from(([1, 0, 0, 1], 443)),
-        SocketAddr::from(([2606, 4700, 4700, 0, 0, 0, 0, 1111], 443)),
-        SocketAddr::from(([2606, 4700, 4700, 0, 0, 0, 0, 1001], 443)),
-    ];
-
+fn doh_client(provider: DohProvider) -> Result<reqwest::Client> {
+    let addrs = provider.bootstrap_addrs();
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
-        .resolve_to_addrs(DOH_HOST, &addrs)
+        .resolve_to_addrs(provider.host(), &addrs)
         .build()
         .context("build DoH client")
 }

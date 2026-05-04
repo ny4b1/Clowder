@@ -14,6 +14,7 @@ use super::types::{
     Comment, CommentCreateResponse, CommentUpdateResponse, CommentsResponse, Credentials, Post,
     PostUpdateResponse, PostsResponse, Tag, TagsResponse,
 };
+use crate::settings::DohProvider;
 
 const HOST: &str = "e621.net";
 const MAX_LIMIT: u32 = 320;
@@ -53,10 +54,12 @@ pub struct Client {
     limiter: Arc<Mutex<Instant>>,
     credentials: Arc<RwLock<Option<Credentials>>>,
     ech_enabled: bool,
+    doh_provider: DohProvider,
+    fail_closed_ech: bool,
 }
 
 impl Client {
-    pub async fn new(fail_closed_ech: bool) -> Result<Self> {
+    pub async fn new(doh_provider: DohProvider, fail_closed_ech: bool) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
@@ -66,7 +69,7 @@ impl Client {
             .timeout(Duration::from_secs(45))
             .connect_timeout(Duration::from_secs(15));
 
-        let configured = configure_ech_client(builder, HOST, fail_closed_ech).await?;
+        let configured = configure_ech_client(builder, HOST, fail_closed_ech, doh_provider).await?;
         let api_http = configured
             .builder
             .build()
@@ -78,6 +81,8 @@ impl Client {
             limiter: Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1))),
             credentials: Arc::new(RwLock::new(None)),
             ech_enabled: configured.ech_enabled,
+            doh_provider,
+            fail_closed_ech,
         })
     }
 
@@ -309,7 +314,8 @@ impl Client {
             .default_headers(headers)
             .timeout(Duration::from_secs(45))
             .connect_timeout(Duration::from_secs(15));
-        let configured = configure_ech_client(builder, host, false).await?;
+        let configured =
+            configure_ech_client(builder, host, self.fail_closed_ech, self.doh_provider).await?;
         let client = configured
             .builder
             .build()
