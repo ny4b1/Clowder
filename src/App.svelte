@@ -195,7 +195,12 @@
   }
 
   async function search(targetPage: number = 1) {
-    const tags = activePreset ? query.trim() : queryWithSort(query, sortMode);
+    const trimmed = query.trim();
+    const hasExplicitOrder = /\border:[a-z_]+/i.test(trimmed);
+    if (hasExplicitOrder && !activePreset) {
+      sortMode = sortModeFromQuery(trimmed);
+    }
+    const tags = activePreset || hasExplicitOrder ? trimmed : queryWithSort(query, sortMode);
     const limit = computePageSize();
     page = Math.max(1, targetPage);
     loading = true;
