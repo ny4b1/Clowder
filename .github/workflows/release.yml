@@ -25,7 +25,7 @@ jobs:
             bundles: nsis
             artifact-glob: src-tauri/target/release/bundle/nsis/*.exe
           - name: macOS DMG
-            platform: macos-13
+            platform: macos-latest
             bundles: dmg
             artifact-glob: src-tauri/target/release/bundle/dmg/*.dmg
           - name: Linux AppImage
