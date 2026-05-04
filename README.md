@@ -16,17 +16,23 @@ your credentials securely in the OS keychain.
 - Tag search with live autocomplete
 - Responsive post grid with infinite browsing
 - Full-resolution viewer for images, GIFs, and videos
-- Streamed video playback with seeking support
+- Streamed video playback with seeking and a configurable chunk size
 - One-click favorite and unfavorite
-- One-click download to `~/Downloads/Clowder`
+- Read, post, and hide comments
+- Edit post tags from the viewer
+- Downloads with a customizable directory and filename template
 - Optional sign-in with your e621 account (username + API key)
 - Credentials stored via the system keychain (Keychain on macOS,
   Credential Manager on Windows, Secret Service on Linux)
+- DNS-over-HTTPS with selectable provider (Cloudflare, Google, Quad9,
+  AdGuard) and an optional fail-closed mode for ECH
+- Theme, reduced-motion, and grid-density preferences
 
 ## Installation
 
-Pre-built binaries are not yet published. Build from source using the
-instructions below.
+Pre-built binaries for Windows (NSIS installer), macOS (`.dmg`), and
+Linux (AppImage) are published on the
+[Releases](https://github.com/nyabi021/Clowder/releases) page.
 
 ## Building from source
 
@@ -43,8 +49,11 @@ npm install
 npm run tauri build
 ```
 
-On macOS, this produces `.app` and `.dmg` bundles under
-`src-tauri/target/release/bundle/`. On Windows, it produces an NSIS installer.
+Bundles are written to `src-tauri/target/release/bundle/`:
+
+- macOS: `.app` and `.dmg` under `bundle/macos/` and `bundle/dmg/`
+- Windows: NSIS installer under `bundle/nsis/`
+- Linux: AppImage under `bundle/appimage/`
 
 ### Run in development mode
 
@@ -58,8 +67,11 @@ npm run tauri dev
 1. Launch Clowder.
 2. Type tags into the search bar. Suggestions appear as you type.
 3. Click a post to open the full-resolution viewer.
-4. (Optional) Open the account dialog to sign in with your e621 username
-   and API key. Signing in unlocks favorites and personalized content.
+4. (Optional) Open Settings to sign in with your e621 username and API
+   key. Signing in unlocks favorites, comments, and tag editing.
+5. From Settings you can also choose a download directory and filename
+   template, pick a DNS-over-HTTPS provider, and adjust theme, motion,
+   and grid density.
 
 You can find your API key on your e621 account page under
 **Manage API Access**.
