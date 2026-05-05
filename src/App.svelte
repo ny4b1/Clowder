@@ -6,51 +6,30 @@
   import SearchHeader from "./components/SearchHeader.svelte";
   import SettingsDialog from "./components/SettingsDialog.svelte";
   import Toolbar from "./components/Toolbar.svelte";
-  import {
-    createComment,
-    downloadFile,
-    favoritePost,
-    fetchComments,
-    getAccount,
-    hideComment,
-    mediaUrl,
-    originalUrl,
-    searchPosts,
-    signIn,
-    signOutAccount,
-    thumbnailUrl,
-    unfavoritePost,
-    updatePostTags,
-  } from "./lib/e621";
-  import { queryWithSort, sortModeFromQuery } from "./lib/search";
+  import { accountStore } from "./lib/account-store.svelte";
+  import { downloadStore } from "./lib/download-store.svelte";
+  import { postActionsStore } from "./lib/post-actions-store.svelte";
+  import { searchStore } from "./lib/search-store.svelte";
   import { settingsStore } from "./lib/settings-store.svelte";
-  import { applyFilenameTemplate } from "./lib/template";
-  import type {
-    CommentState,
-    OriginalViewer as OriginalViewerState,
-    Post,
-    Preset,
-    SettingsSection,
-    SortMode,
-  } from "./lib/types";
+  import { viewerStore } from "./lib/viewer-store.svelte";
+  import type { Post, Preset, SettingsSection, SortMode } from "./lib/types";
 
-  const basePresets: Preset[] = [
-    { label: "Hot", value: "order:rank" },
-    { label: "Popular Today", value: "date:day order:score" },
-  ];
+  let showSettings = $state(false);
+  let settingsSection = $state<SettingsSection>("account");
+  let usernameInput = $state("");
+  let apiKeyInput = $state("");
 
-  let query = $state(basePresets[0].value);
-  let status = $state("idle");
-  let posts = $state<Post[]>([]);
-  let selectedId = $state<number | null>(null);
-  let loading = $state(false);
-  let hasSearched = $state(false);
-  let previews = $state<Record<number, string>>({});
-  let failedPreviews = $state<Record<number, boolean>>({});
-  let activePreset = $state<string | null>(basePresets[0].value);
-  let sortMode = $state<SortMode>("latest");
-  let page = $state(1);
-  let hasNextPage = $state(false);
+  let systemPrefersLight = $state(false);
+  let systemPrefersReducedMotion = $state(false);
+
+  let selectedPost = $derived(
+    searchStore.posts.find((post) => post.id === searchStore.selectedId) ?? null,
+  );
+  let presets = $derived(
+    accountStore.username
+      ? [...searchStore.basePresets, { label: "Favorites", value: `fav:${accountStore.username}` }]
+      : [...searchStore.basePresets, { label: "Favorites", value: "", requiresAccount: true }],
+  );
 
   // Mirrors PostGrid CSS: p-3 (12px), gap-2 (8px), minmax(176px,1fr), h-16 metadata strip (64px).
   function computePageSize(): number {
@@ -70,40 +49,12 @@
     return Math.min(320, Math.max(8, cols * rows));
   }
 
-  let username = $state<string | null>(null);
-  let showSettings = $state(false);
-  let settingsSection = $state<SettingsSection>("account");
-  let usernameInput = $state("");
-  let apiKeyInput = $state("");
-  let accountStatus = $state("");
-  let accountSaving = $state(false);
-  let favoritePending = $state<Record<number, boolean>>({});
-  let downloadPending = $state<Record<number, boolean>>({});
-  let downloadStatus = $state("");
-  let originalViewer = $state<OriginalViewerState | null>(null);
-  let imageOnly = $state(false);
-  let comments = $state<CommentState>({
-    items: [],
-    loading: false,
-    error: null,
-    body: "",
-    submitting: false,
-    submitError: null,
-    hiding: {},
-  });
-
-  let selectedPost = $derived(posts.find((post) => post.id === selectedId) ?? null);
-  let presets = $derived(
-    username
-      ? [...basePresets, { label: "Favorites", value: `fav:${username}` }]
-      : [...basePresets, { label: "Favorites", value: "", requiresAccount: true }],
-  );
-
-  let systemPrefersLight = $state(false);
-  let systemPrefersReducedMotion = $state(false);
+  function search(targetPage: number = 1) {
+    return searchStore.search(targetPage, computePageSize());
+  }
 
   onMount(() => {
-    void loadAccount();
+    void accountStore.load();
     void settingsStore.load();
     window.addEventListener("keydown", onWindowKeydown);
     window.addEventListener("popstate", onPopState);
@@ -148,18 +99,6 @@
     root.style.setProperty("--clowder-tile-min", `${appearance.grid_min_tile_px}px`);
   });
 
-  function onWindowKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      closeTopLayer();
-      return;
-    }
-
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    if (showSettings || isTextInput(event.target)) return;
-    event.preventDefault();
-    moveSelection(event.key === "ArrowRight" ? 1 : -1, !!originalViewer);
-  }
-
   function isTextInput(target: EventTarget | null) {
     if (!(target instanceof HTMLElement)) return false;
     return (
@@ -170,18 +109,18 @@
     );
   }
 
-  function moveSelection(delta: number, openViewer = false) {
-    if (posts.length === 0) return;
-    const currentIndex = selectedId === null ? -1 : posts.findIndex((post) => post.id === selectedId);
-    const fallbackIndex = delta > 0 ? 0 : posts.length - 1;
-    const nextIndex =
-      currentIndex === -1
-        ? fallbackIndex
-        : Math.min(posts.length - 1, Math.max(0, currentIndex + delta));
-    const nextPost = posts[nextIndex];
-    selectedId = nextPost?.id ?? null;
-    if (openViewer && nextPost) {
-      void openOriginal(nextPost, "replace");
+  function onWindowKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      closeTopLayer();
+      return;
+    }
+
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (showSettings || isTextInput(event.target)) return;
+    event.preventDefault();
+    const next = searchStore.moveSelection(event.key === "ArrowRight" ? 1 : -1);
+    if (viewerStore.viewer && next) {
+      openOriginal(next, "replace");
     }
   }
 
@@ -189,13 +128,12 @@
     const state = event.state as { viewer?: number } | null;
     const viewerId = state?.viewer;
     if (typeof viewerId === "number") {
-      if (originalViewer?.post.id === viewerId) return;
-      const post = posts.find((p) => p.id === viewerId);
+      if (viewerStore.viewer?.post.id === viewerId) return;
+      const post = searchStore.postById(viewerId);
       if (post) {
-        void openOriginal(post, "skip");
+        openOriginal(post, "skip");
       } else {
-        originalViewer = null;
-        imageOnly = false;
+        viewerStore.close(true);
       }
     } else {
       closeTopLayer(true);
@@ -211,11 +149,11 @@
   }
 
   function closeTopLayer(fromHistory = false) {
-    if (imageOnly) {
-      imageOnly = false;
-    } else if (originalViewer) {
-      closeOriginal(fromHistory);
-    } else if (showSettings && !accountSaving) {
+    if (viewerStore.imageOnly) {
+      viewerStore.setImageOnly(false);
+    } else if (viewerStore.viewer) {
+      viewerStore.close(fromHistory);
+    } else if (showSettings && !accountStore.saving) {
       closeSettings();
     }
   }
@@ -226,75 +164,11 @@
     }
   }
 
-  async function loadAccount() {
-    try {
-      const result = await getAccount();
-      username = result.username;
-    } catch {
-      username = null;
-    }
-  }
-
-  async function search(targetPage: number = 1) {
-    const trimmed = query.trim();
-    const hasExplicitOrder = /\border:[a-z_]+/i.test(trimmed);
-    if (hasExplicitOrder && !activePreset) {
-      sortMode = sortModeFromQuery(trimmed);
-    }
-    const tags = activePreset || hasExplicitOrder ? trimmed : queryWithSort(query, sortMode);
-    const limit = computePageSize();
-    page = Math.max(1, targetPage);
-    loading = true;
-    hasSearched = true;
-    status = `searching ${tags || "all"}`;
-    posts = [];
-    previews = {};
-    failedPreviews = {};
-    selectedId = null;
-    hasNextPage = false;
-
-    try {
-      const result = await searchPosts(tags, page, limit);
-      posts = result.posts;
-      hasNextPage = posts.length >= limit;
-      status = `${posts.length} post${posts.length === 1 ? "" : "s"}`;
-      for (const post of posts) {
-        void loadPreview(post);
-      }
-    } catch (error) {
-      status = `error: ${String(error)}`;
-    } finally {
-      loading = false;
-    }
-  }
-
   function goToPage(delta: number) {
-    const next = page + delta;
-    if (next < 1 || (delta > 0 && !hasNextPage) || loading) return;
+    const next = searchStore.page + delta;
+    if (next < 1 || (delta > 0 && !searchStore.hasNextPage) || searchStore.loading) return;
     void search(next);
     document.querySelector("[data-grid-scroll]")?.scrollTo({ top: 0 });
-  }
-
-  async function loadPreview(post: Post) {
-    const url = thumbnailUrl(post);
-    if (!url) {
-      markPreviewFailed(post.id);
-      return;
-    }
-
-    try {
-      const proxied = await mediaUrl(url);
-      previews[post.id] = proxied;
-    } catch {
-      markPreviewFailed(post.id);
-    }
-  }
-
-  function markPreviewFailed(postId: number) {
-    delete previews[postId];
-    previews = { ...previews };
-    failedPreviews[postId] = true;
-    failedPreviews = { ...failedPreviews };
   }
 
   function applyPreset(preset: Preset) {
@@ -302,244 +176,75 @@
       openSettings("account");
       return;
     }
-
-    query = preset.value;
-    activePreset = preset.value;
-    sortMode = sortModeFromQuery(preset.value);
+    searchStore.applyPreset(preset);
     void search();
   }
 
   function applySort(value: SortMode) {
-    sortMode = value;
-    activePreset = null;
-    if (hasSearched || query.trim()) {
+    searchStore.applySort(value);
+    if (searchStore.hasSearched || searchStore.query.trim()) {
       void search();
     }
   }
 
-  function setQuery(value: string) {
-    query = value;
-    activePreset = null;
+  function searchTag(tag: string) {
+    viewerStore.close();
+    searchStore.setQueryForTag(tag);
+    void search();
   }
 
-  async function openOriginal(post: Post, historyMode: "push" | "replace" | "skip" = "push") {
-    const url = originalUrl(post);
-    downloadStatus = "";
-    imageOnly = false;
-    comments = {
-      items: [],
-      loading: true,
-      error: null,
-      body: "",
-      submitting: false,
-      submitError: null,
-      hiding: {},
-    };
-    originalViewer = {
-      post,
-      dataUrl: null,
-      loading: !!url,
-      error: url ? null : "original file is unavailable",
-    };
-    if (historyMode === "push") {
-      history.pushState({ viewer: post.id }, "", "");
-    } else if (historyMode === "replace") {
-      history.replaceState({ viewer: post.id }, "", "");
-    }
-
-    void loadComments(post.id);
-
-    if (!url) return;
-
-    try {
-      const result = await mediaUrl(url);
-      if (originalViewer?.post.id === post.id) {
-        originalViewer = {
-          ...originalViewer,
-          dataUrl: result,
-          loading: false,
-          error: null,
-        };
-      }
-    } catch (error) {
-      if (originalViewer?.post.id === post.id) {
-        originalViewer = {
-          ...originalViewer,
-          dataUrl: null,
-          loading: false,
-          error: String(error),
-        };
-      }
-    }
+  function openOriginal(post: Post, historyMode: "push" | "replace" | "skip" = "push") {
+    downloadStore.reset();
+    void viewerStore.open(post, historyMode);
   }
 
-  function closeOriginal(fromHistory = false) {
-    originalViewer = null;
-    imageOnly = false;
-    comments = {
-      items: [],
-      loading: false,
-      error: null,
-      body: "",
-      submitting: false,
-      submitError: null,
-      hiding: {},
-    };
-    if (!fromHistory && history.state?.viewer) {
-      history.back();
-    }
-  }
-
-  async function loadComments(postId: number) {
-    comments = {
-      ...comments,
-      loading: true,
-      error: null,
-    };
-
-    try {
-      const items = await fetchComments(postId);
-      if (originalViewer?.post.id === postId) {
-        comments = {
-          ...comments,
-          items,
-          loading: false,
-          error: null,
-        };
-      }
-    } catch (error) {
-      if (originalViewer?.post.id === postId) {
-        comments = {
-          ...comments,
-          items: [],
-          loading: false,
-          error: String(error),
-        };
-      }
-    }
-  }
-
-  function setCommentBody(value: string) {
-    comments = {
-      ...comments,
-      body: value,
-      submitError: null,
-    };
-  }
-
-  async function submitComment(post: Post) {
-    if (!username) {
+  async function toggleFavorite(post: Post) {
+    if (!accountStore.username) {
       openSettings("account");
       return;
     }
-    const body = comments.body.trim();
-    if (!body || comments.submitting) return;
-
-    comments = {
-      ...comments,
-      submitting: true,
-      submitError: null,
-    };
-
-    try {
-      const created = await createComment(post.id, body);
-      if (originalViewer?.post.id === post.id) {
-        const nextPost = {
-          ...originalViewer.post,
-          comment_count: (originalViewer.post.comment_count ?? comments.items.length) + 1,
-        };
-        originalViewer = {
-          ...originalViewer,
-          post: nextPost,
-        };
-        posts = posts.map((p) =>
-          p.id === post.id ? { ...p, comment_count: (p.comment_count ?? 0) + 1 } : p,
-        );
-        comments = {
-          ...comments,
-          items: [...comments.items, created],
-          body: "",
-          submitting: false,
-          submitError: null,
-        };
-      }
-    } catch (error) {
-      comments = {
-        ...comments,
-        submitting: false,
-        submitError: String(error),
-      };
+    const error = await postActionsStore.toggleFavorite(post);
+    if (error) {
+      searchStore.status = `favorite failed: ${error}`;
     }
   }
 
   async function updateTags(post: Post, tagStringDiff: string, editReason: string) {
-    if (!username) {
+    if (!accountStore.username) {
       openSettings("account");
       return;
     }
-    const updated = await updatePostTags(post.id, tagStringDiff, editReason);
-    posts = posts.map((p) => (p.id === post.id ? updated : p));
-    if (originalViewer?.post.id === post.id) {
-      originalViewer = {
-        ...originalViewer,
-        post: updated,
-      };
+    await postActionsStore.updateTags(post, tagStringDiff, editReason);
+  }
+
+  async function submitComment(post: Post) {
+    if (!accountStore.username) {
+      openSettings("account");
+      return;
+    }
+    const newCount = await viewerStore.submitComment(post);
+    if (newCount !== null) {
+      searchStore.updatePost(post.id, { comment_count: newCount });
     }
   }
 
   async function hideOwnComment(commentId: number) {
-    if (!username || comments.hiding[commentId]) return;
-    comments = {
-      ...comments,
-      submitError: null,
-      hiding: {
-        ...comments.hiding,
-        [commentId]: true,
-      },
-    };
-    try {
-      const hidden = await hideComment(commentId);
-      comments = {
-        ...comments,
-        items: comments.items.map((comment) =>
-          comment.id === commentId ? { ...comment, ...hidden, is_hidden: true } : comment,
-        ),
-        hiding: {
-          ...comments.hiding,
-          [commentId]: false,
-        },
-      };
-    } catch (error) {
-      comments = {
-        ...comments,
-        submitError: String(error),
-        hiding: {
-          ...comments.hiding,
-          [commentId]: false,
-        },
-      };
-    }
-  }
-
-  function searchTag(tag: string) {
-    closeOriginal();
-    query = tag;
-    activePreset = null;
-    void search();
+    if (!accountStore.username) return;
+    await viewerStore.hideOwnComment(commentId);
   }
 
   function openSettings(section: SettingsSection = "account") {
-    usernameInput = username ?? "";
+    usernameInput = accountStore.username ?? "";
     apiKeyInput = "";
-    accountStatus = "";
+    accountStore.status = "";
     settingsSection = section;
     showSettings = true;
   }
 
   function closeSettings() {
-    if (accountSaving) return;
+    if (accountStore.saving) return;
     showSettings = false;
-    accountStatus = "";
+    accountStore.status = "";
   }
 
   async function submitSignIn(event: Event) {
@@ -547,107 +252,24 @@
     const u = usernameInput.trim();
     const k = apiKeyInput.trim();
     if (!u || !k) {
-      accountStatus = "username and api key are required";
+      accountStore.status = "username and api key are required";
       return;
     }
-    accountSaving = true;
-    accountStatus = "verifying";
-    try {
-      const result = await signIn(u, k);
-      username = result.username;
+    const ok = await accountStore.signIn(u, k);
+    if (ok) {
       apiKeyInput = "";
       showSettings = false;
-      accountStatus = "";
-    } catch (error) {
-      accountStatus = String(error);
-    } finally {
-      accountSaving = false;
     }
   }
 
   async function signOut() {
-    accountSaving = true;
-    accountStatus = "";
-    try {
-      await signOutAccount();
-      username = null;
+    const ok = await accountStore.signOut();
+    if (ok) {
       apiKeyInput = "";
       showSettings = false;
-      if (activePreset?.startsWith("fav:")) {
-        applyPreset(basePresets[0]);
+      if (searchStore.activePreset?.startsWith("fav:")) {
+        applyPreset(searchStore.basePresets[0]);
       }
-    } catch (error) {
-      accountStatus = String(error);
-    } finally {
-      accountSaving = false;
-    }
-  }
-
-  async function toggleFavorite(post: Post) {
-    if (!username) {
-      openSettings("account");
-      return;
-    }
-    if (favoritePending[post.id]) return;
-
-    const wasFavorited = post.is_favorited === true;
-    favoritePending[post.id] = true;
-
-    try {
-      if (wasFavorited) {
-        await unfavoritePost(post.id);
-      } else {
-        await favoritePost(post.id);
-      }
-      posts = posts.map((p) =>
-        p.id === post.id
-          ? {
-              ...p,
-              is_favorited: !wasFavorited,
-              fav_count: Math.max(0, (p.fav_count ?? 0) + (wasFavorited ? -1 : 1)),
-            }
-          : p,
-      );
-      if (originalViewer?.post.id === post.id) {
-        originalViewer = {
-          ...originalViewer,
-          post: {
-            ...originalViewer.post,
-            is_favorited: !wasFavorited,
-            fav_count: Math.max(
-              0,
-              (originalViewer.post.fav_count ?? 0) + (wasFavorited ? -1 : 1),
-            ),
-          },
-        };
-      }
-    } catch (error) {
-      status = `favorite failed: ${String(error)}`;
-    } finally {
-      delete favoritePending[post.id];
-      favoritePending = { ...favoritePending };
-    }
-  }
-
-  async function downloadOriginal(post: Post) {
-    const url = originalUrl(post);
-    if (!url || downloadPending[post.id]) return;
-
-    downloadPending[post.id] = true;
-    downloadPending = { ...downloadPending };
-    downloadStatus = "downloading";
-
-    try {
-      const template =
-        settingsStore.current.downloads.filename_template.trim() || "{artist}_{id}.{ext}";
-      const filename = applyFilenameTemplate(template, post);
-      const path = await downloadFile(url, filename);
-      downloadStatus = `saved ${path}`;
-    } catch (error) {
-      downloadStatus = `download failed: ${String(error)}`;
-    } finally {
-      delete downloadPending[post.id];
-      downloadPending = { ...downloadPending };
     }
   }
 </script>
@@ -658,15 +280,15 @@
 
 <main class="grid h-screen grid-rows-[48px_36px_minmax(0,1fr)] bg-room-bg text-room-text">
   <SearchHeader
-    {query}
-    {status}
-    {loading}
-    {username}
-    {hasSearched}
-    {page}
-    {hasNextPage}
-    onQueryChange={setQuery}
-    onSearch={search}
+    query={searchStore.query}
+    status={searchStore.status}
+    loading={searchStore.loading}
+    username={accountStore.username}
+    hasSearched={searchStore.hasSearched}
+    page={searchStore.page}
+    hasNextPage={searchStore.hasNextPage}
+    onQueryChange={(value) => searchStore.setQuery(value)}
+    onSearch={() => search()}
     onOpenAccount={() => openSettings("account")}
     onOpenSettings={() => openSettings("network")}
     onPageChange={goToPage}
@@ -674,8 +296,8 @@
 
   <Toolbar
     {presets}
-    {activePreset}
-    {sortMode}
+    activePreset={searchStore.activePreset}
+    sortMode={searchStore.sortMode}
     onApplyPreset={applyPreset}
     onApplySort={applySort}
   />
@@ -683,41 +305,41 @@
   <section class="grid min-h-0 grid-cols-[300px_minmax(0,1fr)]">
     <PostSidebar
       {selectedPost}
-      {username}
-      {favoritePending}
+      username={accountStore.username}
+      favoritePending={postActionsStore.favoritePending}
       onOpenOriginal={openOriginal}
       onToggleFavorite={toggleFavorite}
     />
     <PostGrid
-      {posts}
-      {loading}
-      {hasSearched}
-      {selectedId}
-      {previews}
-      {failedPreviews}
-      onSelect={(id) => (selectedId = id)}
+      posts={searchStore.posts}
+      loading={searchStore.loading}
+      hasSearched={searchStore.hasSearched}
+      selectedId={searchStore.selectedId}
+      previews={searchStore.previews}
+      failedPreviews={searchStore.failedPreviews}
+      onSelect={(id) => searchStore.selectId(id)}
       onOpenOriginal={openOriginal}
-      onPreviewError={markPreviewFailed}
+      onPreviewError={(id) => searchStore.markPreviewFailed(id)}
     />
   </section>
 
-  {#if originalViewer}
+  {#if viewerStore.viewer}
     <OriginalViewer
-      viewer={originalViewer}
-      {imageOnly}
-      {username}
-      favoritePending={!!favoritePending[originalViewer.post.id]}
-      downloadPending={!!downloadPending[originalViewer.post.id]}
-      {downloadStatus}
-      {comments}
-      onClose={closeOriginal}
-      onToggleImageOnly={() => (imageOnly = !imageOnly)}
+      viewer={viewerStore.viewer}
+      imageOnly={viewerStore.imageOnly}
+      username={accountStore.username}
+      favoritePending={postActionsStore.isFavoritePending(viewerStore.viewer.post.id)}
+      downloadPending={downloadStore.isPending(viewerStore.viewer.post.id)}
+      downloadStatus={downloadStore.status}
+      comments={viewerStore.comments}
+      onClose={() => viewerStore.close()}
+      onToggleImageOnly={() => viewerStore.toggleImageOnly()}
       onSearchTag={searchTag}
       onToggleFavorite={toggleFavorite}
-      onDownload={downloadOriginal}
-      onCommentBodyChange={setCommentBody}
+      onDownload={(post) => downloadStore.download(post)}
+      onCommentBodyChange={(body) => viewerStore.setCommentBody(body)}
       onSubmitComment={submitComment}
-      onRefreshComments={loadComments}
+      onRefreshComments={(id) => viewerStore.loadComments(id)}
       onOpenAccount={() => openSettings("account")}
       onUpdateTags={updateTags}
       onHideComment={hideOwnComment}
@@ -726,14 +348,14 @@
 
   {#if showSettings}
     <SettingsDialog
-      {username}
+      username={accountStore.username}
       initialSection={settingsSection}
       {usernameInput}
       {apiKeyInput}
-      {accountStatus}
-      {accountSaving}
+      accountStatus={accountStore.status}
+      accountSaving={accountStore.saving}
       onClose={closeSettings}
-      onBackdropClick={onBackdropClick}
+      {onBackdropClick}
       onSubmit={submitSignIn}
       onSignOut={signOut}
       onUsernameInput={(value) => (usernameInput = value)}
