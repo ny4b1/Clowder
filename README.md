@@ -1,9 +1,9 @@
 # Clowder
 
-![Release](https://img.shields.io/github/v/release/ny4b1/Clowder?style=flat&color=6366f1)
-![Downloads](https://img.shields.io/github/downloads/ny4b1/Clowder/total?style=flat&color=10b981)
-![Last Commit](https://img.shields.io/github/last-commit/ny4b1/Clowder?style=flat&color=f59e0b)
-![License](https://img.shields.io/badge/license-GPL--3.0-8b5cf6?style=flat)
+![Release](https://img.shields.io/github/v/release/nyabi021/Clowder?style=flat&color=6366f1)
+![Downloads](https://img.shields.io/github/downloads/nyabi021/Clowder/total?style=flat&color=10b981)
+![Last Commit](https://img.shields.io/github/last-commit/nyabi021/Clowder?style=flat&color=f59e0b)
+![License](https://img.shields.io/badge/license-GPL--3.0--or--later-8b5cf6?style=flat)
 
 A fast, native desktop viewer for e621.
 
@@ -78,6 +78,6 @@ You can find your API key on your e621 account page under
 
 ## License
 
-Clowder is released under the [GNU General Public License v3.0](LICENSE).
+Clowder is released under the [GNU General Public License v3.0 or later](LICENSE).
 
 This project is not affiliated with or endorsed by e621.
