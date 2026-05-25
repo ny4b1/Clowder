@@ -593,14 +593,14 @@
                   source
                 </div>
                 <div class="mt-1 font-mono text-[12px] text-room-text-mid">
-                  github.com/nyabi021/Clowder
+                  github.com/nyattic/Clowder
                 </div>
               </div>
               <div>
                 <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
                   license
                 </div>
-                <div class="mt-1 font-mono text-[12px] text-room-text-mid">GPL-3.0-or-later</div>
+                <div class="mt-1 font-mono text-[12px] text-room-text-mid">GPL-3.0</div>
               </div>
               <p class="pt-2 text-[11.5px] leading-relaxed text-room-text-low">
                 Not affiliated with or endorsed by e621.

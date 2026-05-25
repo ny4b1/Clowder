@@ -290,7 +290,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         bind:this={imageOnlyVideoFrameElement}
-        class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-room-floor' : 'absolute inset-4'}"
+        class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-black' : 'absolute inset-4'}"
         onclick={(event) => event.stopPropagation()}
         onmousemove={revealVideoControls}
         onmouseenter={revealVideoControls}
@@ -403,7 +403,7 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               bind:this={videoFrameElement}
-              class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-room-floor' : 'absolute inset-4'}"
+              class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-black' : 'absolute inset-4'}"
               onmousemove={revealVideoControls}
               onmouseenter={revealVideoControls}
               onmouseleave={hideVideoControls}

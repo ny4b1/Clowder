@@ -17,6 +17,7 @@ your credentials securely in the OS keychain.
 - Responsive post grid with infinite browsing
 - Full-resolution viewer for images, GIFs, and videos
 - Streamed video playback with seeking and a configurable chunk size
+- Native macOS / Windows / Linux fullscreen for videos
 - One-click favorite and unfavorite
 - Read, post, and hide comments
 - Edit post tags from the viewer
@@ -24,15 +25,26 @@ your credentials securely in the OS keychain.
 - Optional sign-in with your e621 account (username + API key)
 - Credentials stored via the system keychain (Keychain on macOS,
   Credential Manager on Windows, Secret Service on Linux)
-- DNS-over-HTTPS with selectable provider (Cloudflare, Google, Quad9,
-  AdGuard) and an optional fail-closed mode for ECH
+- Chrome TLS / HTTP/2 fingerprint emulation (via `wreq` + `wreq-util`)
+  to pass Cloudflare's automated challenges that block generic HTTP clients
 - Theme, reduced-motion, and grid-density preferences
+
+## Network
+
+Clowder makes no attempt at per-app circumvention. If your country or ISP
+blocks e621 (e.g. the Korean geo-block via Cloudflare), enable a system-wide
+VPN before launching the app — any provider whose exit IP a regular browser
+can reach e621 from will work.
+
+Because Clowder impersonates a real Chrome browser at the TLS / HTTP/2 layer,
+it does not get caught by Cloudflare's managed challenge on VPN IPs that a
+normal browser can pass.
 
 ## Installation
 
 Pre-built binaries for Windows (NSIS installer), macOS (`.dmg`), and
 Linux (AppImage) are published on the
-[Releases](https://github.com/nyabi021/Clowder/releases) page.
+[Releases](https://github.com/nyattic/Clowder/releases) page.
 
 ## Building from source
 
@@ -64,14 +76,14 @@ npm run tauri dev
 
 ## Usage
 
-1. Launch Clowder.
+1. Launch Clowder. If you're behind a geo-block, enable your system VPN
+   first.
 2. Type tags into the search bar. Suggestions appear as you type.
 3. Click a post to open the full-resolution viewer.
 4. (Optional) Open Settings to sign in with your e621 username and API
    key. Signing in unlocks favorites, comments, and tag editing.
 5. From Settings you can also choose a download directory and filename
-   template, pick a DNS-over-HTTPS provider, and adjust theme, motion,
-   and grid density.
+   template, and adjust theme, motion, and grid density.
 
 You can find your API key on your e621 account page under
 **Manage API Access**.

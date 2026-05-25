@@ -29,7 +29,7 @@ fn host_accepts_credentials(host: &str) -> bool {
 const USER_AGENT_VALUE: &str = concat!(
     "clowder/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/nyabi021/Clowder)"
+    " (https://github.com/nyattic/Clowder)"
 );
 
 #[derive(Debug, Clone)]
