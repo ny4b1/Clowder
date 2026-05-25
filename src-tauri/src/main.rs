@@ -31,8 +31,8 @@ const ALLOWED_MEDIA_HOSTS: &[&str] = &[
     "static2.e926.net",
 ];
 
-fn validate_remote_url(raw: &str) -> Result<reqwest::Url, String> {
-    let parsed = reqwest::Url::parse(raw).map_err(|err| format!("invalid URL: {err}"))?;
+fn validate_remote_url(raw: &str) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(raw).map_err(|err| format!("invalid URL: {err}"))?;
     if parsed.scheme() != "https" {
         return Err(format!(
             "only https URLs are allowed (got {})",
@@ -58,6 +58,7 @@ const USER_ACTIONABLE_PATTERNS: &[&str] = &[
     "only https URLs are allowed",
     "URL has no host",
     "invalid URL",
+    "Cloudflare blocked the request",
 ];
 
 fn is_user_actionable(msg: &str) -> bool {
@@ -92,7 +93,6 @@ impl AppState {
 #[derive(Serialize)]
 struct SearchResponse {
     posts: Vec<Post>,
-    ech_enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -127,7 +127,6 @@ async fn search_posts(
         .map_err(|err| report("search_posts", "Search failed. Please try again.", err))?;
     Ok(SearchResponse {
         posts: outcome.posts,
-        ech_enabled: outcome.ech_enabled,
     })
 }
 
@@ -298,19 +297,7 @@ async fn update_settings(
 ) -> Result<Settings, String> {
     settings::save(&app, &new_settings)
         .map_err(|err| report("settings_save", "Failed to save settings.", err))?;
-
-    let invalidate_client = {
-        let mut guard = state.settings.write().expect("settings lock");
-        let changed = guard.doh_provider != new_settings.doh_provider
-            || guard.fail_closed_ech != new_settings.fail_closed_ech;
-        *guard = new_settings.clone();
-        changed
-    };
-
-    if invalidate_client {
-        *state.client.lock().await = None;
-    }
-
+    *state.settings.write().expect("settings lock") = new_settings.clone();
     Ok(new_settings)
 }
 
@@ -333,12 +320,7 @@ async fn get_client_inner(state: &Arc<AppState>) -> Result<Client, String> {
         return Ok(client.clone());
     }
 
-    let (doh_provider, fail_closed_ech) = {
-        let s = state.settings.read().expect("settings lock");
-        (s.doh_provider, s.fail_closed_ech)
-    };
-
-    let client = Client::new(doh_provider, fail_closed_ech)
+    let client = Client::new()
         .await
         .map_err(|err| report("client_init", "Could not initialize HTTP client.", err))?;
 

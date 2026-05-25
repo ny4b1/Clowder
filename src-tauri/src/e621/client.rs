@@ -1,31 +1,31 @@
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use reqwest::header::{
-    ACCEPT, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderMap, HeaderValue,
-    RANGE, USER_AGENT,
-};
 use tokio::sync::Mutex;
+use wreq::header::{
+    ACCEPT, ACCEPT_LANGUAGE, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
+    HeaderMap, HeaderName, HeaderValue, RANGE, USER_AGENT,
+};
+use wreq_util::Emulation;
 
-use super::ech::configure_ech_client;
 use super::types::{
     Comment, CommentCreateResponse, CommentUpdateResponse, CommentsResponse, Credentials, Post,
     PostUpdateResponse, PostsResponse, Tag, TagsResponse,
 };
-use crate::settings::DohProvider;
 
 const HOST: &str = "e621.net";
 const MAX_LIMIT: u32 = 320;
 const MIN_LIMIT: u32 = 8;
 const CREDENTIAL_DOMAINS: &[&str] = &["e621.net", "e926.net"];
+const EMULATION_PROFILE: Emulation = Emulation::Chrome136;
 
 fn host_accepts_credentials(host: &str) -> bool {
     CREDENTIAL_DOMAINS
         .iter()
         .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
+
 const USER_AGENT_VALUE: &str = concat!(
     "clowder/",
     env!("CARGO_PKG_VERSION"),
@@ -35,7 +35,6 @@ const USER_AGENT_VALUE: &str = concat!(
 #[derive(Debug, Clone)]
 pub struct SearchOutcome {
     pub posts: Vec<Post>,
-    pub ech_enabled: bool,
 }
 
 pub struct MediaResponse {
@@ -49,40 +48,33 @@ pub struct MediaResponse {
 
 #[derive(Clone)]
 pub struct Client {
-    api_http: reqwest::Client,
-    media_clients: Arc<Mutex<HashMap<String, reqwest::Client>>>,
+    http: wreq::Client,
     limiter: Arc<Mutex<Instant>>,
     credentials: Arc<RwLock<Option<Credentials>>>,
-    ech_enabled: bool,
-    doh_provider: DohProvider,
-    fail_closed_ech: bool,
 }
 
 impl Client {
-    pub async fn new(doh_provider: DohProvider, fail_closed_ech: bool) -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        headers.insert(
+            ACCEPT_LANGUAGE,
+            HeaderValue::from_static("en-US,en;q=0.9"),
+        );
 
-        let builder = reqwest::Client::builder()
+        let http = wreq::Client::builder()
+            .emulation(EMULATION_PROFILE)
             .default_headers(headers)
             .timeout(Duration::from_secs(45))
-            .connect_timeout(Duration::from_secs(15));
-
-        let configured = configure_ech_client(builder, HOST, fail_closed_ech, doh_provider).await?;
-        let api_http = configured
-            .builder
+            .connect_timeout(Duration::from_secs(15))
             .build()
-            .context("build e621 API client")?;
+            .context("build wreq client")?;
 
         Ok(Self {
-            api_http,
-            media_clients: Arc::new(Mutex::new(HashMap::new())),
+            http,
             limiter: Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1))),
             credentials: Arc::new(RwLock::new(None)),
-            ech_enabled: configured.ech_enabled,
-            doh_provider,
-            fail_closed_ech,
         })
     }
 
@@ -108,7 +100,7 @@ impl Client {
         let page = page.max(1);
         let limit = limit.clamp(MIN_LIMIT, MAX_LIMIT);
         let mut req = self
-            .api_http
+            .http
             .get(format!("https://{HOST}/posts.json"))
             .query(&[
                 ("tags", tags.trim()),
@@ -124,14 +116,16 @@ impl Client {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            if status.as_u16() == 403 && is_cloudflare_challenge(&body) {
+                return Err(anyhow!(
+                    "Cloudflare blocked the request. Try a different VPN exit node."
+                ));
+            }
             return Err(anyhow!("search failed: HTTP {status} {}", trim_body(&body)));
         }
 
         let parsed: PostsResponse = resp.json().await.context("decode posts response")?;
-        Ok(SearchOutcome {
-            posts: parsed.posts,
-            ech_enabled: self.ech_enabled,
-        })
+        Ok(SearchOutcome { posts: parsed.posts })
     }
 
     pub async fn autocomplete_tags(&self, term: &str, category: Option<u8>) -> Result<Vec<Tag>> {
@@ -158,7 +152,7 @@ impl Client {
         }
 
         let mut req = self
-            .api_http
+            .http
             .get(format!("https://{HOST}/tags.json"))
             .query(&query);
         if let Some(creds) = self.auth() {
@@ -189,7 +183,7 @@ impl Client {
         self.wait_for_api_slot().await;
 
         let resp = self
-            .api_http
+            .http
             .get(format!("https://{HOST}/favorites.json"))
             .query(&[("limit", "1")])
             .basic_auth(&creds.username, Some(&creds.api_key))
@@ -198,11 +192,19 @@ impl Client {
             .context("send credential validation request")?;
 
         let status = resp.status();
-        if status.as_u16() == 401 || status.as_u16() == 403 {
+        if status.as_u16() == 401 {
             return Err(anyhow!("invalid username or API key"));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            if status.as_u16() == 403 && is_cloudflare_challenge(&body) {
+                return Err(anyhow!(
+                    "Cloudflare blocked the request (the network or VPN you're using is flagged). Try a different exit node."
+                ));
+            }
+            if status.as_u16() == 403 {
+                return Err(anyhow!("invalid username or API key"));
+            }
             return Err(anyhow!(
                 "credential check failed: HTTP {status} {}",
                 trim_body(&body)
@@ -218,7 +220,7 @@ impl Client {
         self.wait_for_api_slot().await;
 
         let resp = self
-            .api_http
+            .http
             .post(format!("https://{HOST}/favorites.json"))
             .query(&[("post_id", post_id.to_string())])
             .basic_auth(&creds.username, Some(&creds.api_key))
@@ -244,7 +246,7 @@ impl Client {
         self.wait_for_api_slot().await;
 
         let resp = self
-            .api_http
+            .http
             .delete(format!("https://{HOST}/favorites/{post_id}.json"))
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
@@ -267,14 +269,13 @@ impl Client {
     }
 
     pub async fn download_media(&self, url: &str, range: Option<&str>) -> Result<MediaResponse> {
-        let parsed = reqwest::Url::parse(url).context("parse media URL")?;
+        let parsed = url::Url::parse(url).context("parse media URL")?;
         let host = parsed
             .host_str()
             .ok_or_else(|| anyhow!("media URL has no host"))?
             .to_string();
 
-        let http = self.media_client_for(&host).await?;
-        let mut req = http.get(parsed);
+        let mut req = self.http.get(parsed.as_str());
         if let Some(range) = range {
             req = req.header(RANGE, range);
         }
@@ -299,29 +300,6 @@ impl Client {
             accept_ranges: header_string(&headers, ACCEPT_RANGES),
             bytes,
         })
-    }
-
-    async fn media_client_for(&self, host: &str) -> Result<reqwest::Client> {
-        let mut clients = self.media_clients.lock().await;
-        if let Some(client) = clients.get(host) {
-            return Ok(client.clone());
-        }
-
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
-
-        let builder = reqwest::Client::builder()
-            .default_headers(headers)
-            .timeout(Duration::from_secs(45))
-            .connect_timeout(Duration::from_secs(15));
-        let configured =
-            configure_ech_client(builder, host, self.fail_closed_ech, self.doh_provider).await?;
-        let client = configured
-            .builder
-            .build()
-            .with_context(|| format!("build media client for {host}"))?;
-        clients.insert(host.to_string(), client.clone());
-        Ok(client)
     }
 
     async fn wait_for_api_slot(&self) {
@@ -359,7 +337,7 @@ impl Client {
         }
 
         let resp = self
-            .api_http
+            .http
             .patch(format!("https://{HOST}/posts/{post_id}.json"))
             .query(&query)
             .basic_auth(&creds.username, Some(&creds.api_key))
@@ -390,7 +368,7 @@ impl Client {
 
         let limit = limit.clamp(1, MAX_LIMIT);
         let mut req = self
-            .api_http
+            .http
             .get(format!("https://{HOST}/comments.json"))
             .query(&[
                 ("search[post_id]", post_id.to_string()),
@@ -432,7 +410,7 @@ impl Client {
         self.wait_for_api_slot().await;
 
         let resp = self
-            .api_http
+            .http
             .post(format!("https://{HOST}/comments.json"))
             .query(&[
                 ("comment[post_id]", post_id.to_string()),
@@ -470,7 +448,7 @@ impl Client {
         self.wait_for_api_slot().await;
 
         let resp = self
-            .api_http
+            .http
             .post(format!("https://{HOST}/comments/{comment_id}/hide.json"))
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
@@ -504,11 +482,18 @@ impl Client {
     }
 }
 
-fn header_string(headers: &HeaderMap, name: reqwest::header::HeaderName) -> Option<String> {
+fn header_string(headers: &HeaderMap, name: HeaderName) -> Option<String> {
     headers
         .get(name)
         .and_then(|value| value.to_str().ok())
         .map(ToString::to_string)
+}
+
+fn is_cloudflare_challenge(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("cdn-cgi/")
+        || lower.contains("cloudflare")
+        || lower.contains("just a moment")
 }
 
 fn trim_body(body: &str) -> String {
@@ -545,6 +530,19 @@ mod tests {
         assert!(!host_accepts_credentials("e621.net.evil.com"));
         assert!(!host_accepts_credentials("notrealle621.net"));
         assert!(!host_accepts_credentials("e621-net"));
+    }
+
+    #[test]
+    fn detects_cloudflare_challenge_pages() {
+        assert!(is_cloudflare_challenge(
+            "<html><a href=\"https://e621.net/cdn-cgi/content?id=abc\"></a>"
+        ));
+        assert!(is_cloudflare_challenge("Just a moment..."));
+        assert!(is_cloudflare_challenge(
+            "<title>Cloudflare Error 1020: Access Denied</title>"
+        ));
+        assert!(!is_cloudflare_challenge("regular error body without markers"));
+        assert!(!is_cloudflare_challenge("{\"success\":false,\"reason\":\"banned\"}"));
     }
 
     #[test]

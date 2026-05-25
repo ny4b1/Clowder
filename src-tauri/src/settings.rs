@@ -1,84 +1,13 @@
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DohProvider {
-    #[default]
-    Cloudflare,
-    Google,
-    Quad9,
-    AdGuard,
-}
-
-impl DohProvider {
-    pub fn url(&self) -> &'static str {
-        match self {
-            Self::Cloudflare => "https://cloudflare-dns.com/dns-query",
-            Self::Google => "https://dns.google/dns-query",
-            Self::Quad9 => "https://dns.quad9.net/dns-query",
-            Self::AdGuard => "https://dns.adguard.com/dns-query",
-        }
-    }
-
-    pub fn host(&self) -> &'static str {
-        match self {
-            Self::Cloudflare => "cloudflare-dns.com",
-            Self::Google => "dns.google",
-            Self::Quad9 => "dns.quad9.net",
-            Self::AdGuard => "dns.adguard.com",
-        }
-    }
-
-    pub fn bootstrap_addrs(&self) -> Vec<SocketAddr> {
-        match self {
-            Self::Cloudflare => vec![
-                v4(1, 1, 1, 1),
-                v4(1, 0, 0, 1),
-                v6(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111),
-                v6(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001),
-            ],
-            Self::Google => vec![
-                v4(8, 8, 8, 8),
-                v4(8, 8, 4, 4),
-                v6(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
-                v6(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8844),
-            ],
-            Self::Quad9 => vec![
-                v4(9, 9, 9, 9),
-                v4(149, 112, 112, 112),
-                v6(0x2620, 0x00fe, 0, 0, 0, 0, 0, 0x00fe),
-                v6(0x2620, 0x00fe, 0, 0, 0, 0, 0, 0x0009),
-            ],
-            Self::AdGuard => vec![
-                v4(94, 140, 14, 14),
-                v4(94, 140, 15, 15),
-                v6(0x2a10, 0x50c0, 0, 0, 0, 0, 0x0ad1, 0x00ff),
-                v6(0x2a10, 0x50c0, 0, 0, 0, 0, 0x0ad2, 0x00ff),
-            ],
-        }
-    }
-}
-
-const fn v4(a: u8, b: u8, c: u8, d: u8) -> SocketAddr {
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(a, b, c, d)), 443)
-}
-
-#[allow(clippy::too_many_arguments)]
-const fn v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16) -> SocketAddr {
-    SocketAddr::new(IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h)), 443)
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub doh_provider: DohProvider,
-    pub fail_closed_ech: bool,
     pub downloads: DownloadSettings,
     pub playback: PlaybackSettings,
     pub appearance: AppearanceSettings,
@@ -213,8 +142,6 @@ mod tests {
     #[test]
     fn settings_round_trip_serializes() {
         let s = Settings {
-            doh_provider: DohProvider::Quad9,
-            fail_closed_ech: true,
             downloads: DownloadSettings {
                 directory: Some("/tmp/clowder".to_string()),
                 filename_template: "{id}.{ext}".to_string(),
@@ -238,11 +165,22 @@ mod tests {
     #[test]
     fn settings_uses_defaults_on_missing_fields() {
         let s: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(s.doh_provider, DohProvider::Cloudflare);
-        assert!(!s.fail_closed_ech);
         assert_eq!(s.downloads, DownloadSettings::default());
         assert_eq!(s.playback, PlaybackSettings::default());
         assert_eq!(s.appearance, AppearanceSettings::default());
+    }
+
+    #[test]
+    fn settings_ignores_unknown_legacy_fields() {
+        let json = r#"{
+            "connection_mode": "wg",
+            "doh_provider": "cloudflare",
+            "fail_closed_ech": true,
+            "playback": {"video_chunk_mb": 4}
+        }"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.playback.video_chunk_mb, 4);
+        assert_eq!(s.downloads, DownloadSettings::default());
     }
 
     #[test]
@@ -282,36 +220,5 @@ mod tests {
         assert_eq!(a.theme, Theme::System);
         assert_eq!(a.motion, MotionPreference::System);
         assert_eq!(a.grid_min_tile_px, 176);
-    }
-
-    #[test]
-    fn settings_uses_defaults_on_partial_fields() {
-        let s: Settings = serde_json::from_str(r#"{"fail_closed_ech": true}"#).unwrap();
-        assert_eq!(s.doh_provider, DohProvider::Cloudflare);
-        assert!(s.fail_closed_ech);
-    }
-
-    #[test]
-    fn doh_providers_have_https_urls_and_bootstrap_addrs() {
-        for provider in [
-            DohProvider::Cloudflare,
-            DohProvider::Google,
-            DohProvider::Quad9,
-            DohProvider::AdGuard,
-        ] {
-            assert!(provider.url().starts_with("https://"));
-            assert!(provider.host().contains('.'));
-            let addrs = provider.bootstrap_addrs();
-            assert!(!addrs.is_empty());
-            assert!(addrs.iter().all(|a| a.port() == 443));
-        }
-    }
-
-    #[test]
-    fn doh_provider_serializes_as_snake_case() {
-        let json = serde_json::to_string(&DohProvider::AdGuard).unwrap();
-        assert_eq!(json, "\"ad_guard\"");
-        let back: DohProvider = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, DohProvider::AdGuard);
     }
 }

@@ -2,8 +2,6 @@ import { getSettings, updateSettings } from "./settings";
 import type { Settings } from "./types";
 
 const defaults: Settings = {
-  doh_provider: "cloudflare",
-  fail_closed_ech: false,
   downloads: {
     directory: null,
     filename_template: "{artist}_{id}.{ext}",

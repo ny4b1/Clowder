@@ -74,15 +74,9 @@
   });
 
   onMount(() => {
-    const restoreAfterFullscreen = () => {
-      if (document.fullscreenElement) return;
-      appVideoFullscreen = false;
-      void setWindowFullscreen(false).catch(() => {});
-      window.setTimeout(() => restoreVideoPlayback(activeVideoElement()), 80);
-    };
     const onVideoKeydown = (event: KeyboardEvent) => {
       if (!isVideoPost(viewer.post) || !viewer.dataUrl) return;
-      if (event.key === "Escape" && (appVideoFullscreen || document.fullscreenElement)) {
+      if (event.key === "Escape" && appVideoFullscreen) {
         event.preventDefault();
         event.stopImmediatePropagation();
         void exitVideoFullscreen(activeVideoElement());
@@ -94,12 +88,8 @@
       event.stopImmediatePropagation();
       void toggleVideoPlayback(activeVideoElement());
     };
-    document.addEventListener("fullscreenchange", restoreAfterFullscreen);
-    document.addEventListener("webkitfullscreenchange", restoreAfterFullscreen);
     window.addEventListener("keydown", onVideoKeydown, { capture: true });
     return () => {
-      document.removeEventListener("fullscreenchange", restoreAfterFullscreen);
-      document.removeEventListener("webkitfullscreenchange", restoreAfterFullscreen);
       window.removeEventListener("keydown", onVideoKeydown, { capture: true });
       window.clearTimeout(videoControlsTimer);
     };
@@ -239,35 +229,20 @@
     revealVideoControls();
     saveVideoPlayback(target);
 
-    if (appVideoFullscreen || document.fullscreenElement) {
+    if (appVideoFullscreen) {
       await exitVideoFullscreen(target);
       return;
     }
 
-    const fullscreenFrame = frame as HTMLDivElement & {
-      webkitRequestFullscreen?: () => Promise<void> | void;
-    };
-
     showVideoMenu = false;
     appVideoFullscreen = true;
-    try {
-      if (fullscreenFrame.requestFullscreen) {
-        await fullscreenFrame.requestFullscreen();
-      } else if (fullscreenFrame.webkitRequestFullscreen) {
-        await fullscreenFrame.webkitRequestFullscreen();
-      }
-    } catch {
-      await setWindowFullscreen(true).catch(() => {});
-    }
+    await setWindowFullscreen(true).catch(() => {});
     window.setTimeout(() => restoreVideoPlayback(target), 80);
   }
 
   async function exitVideoFullscreen(target: HTMLVideoElement | undefined) {
     showVideoMenu = false;
     appVideoFullscreen = false;
-    if (document.fullscreenElement) {
-      await document.exitFullscreen().catch(() => {});
-    }
     await setWindowFullscreen(false).catch(() => {});
     window.setTimeout(() => restoreVideoPlayback(target), 80);
   }

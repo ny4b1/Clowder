@@ -2,11 +2,9 @@
   import { onMount, untrack } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { dohProviderOptions } from "../lib/settings";
   import { settingsStore } from "../lib/settings-store.svelte";
   import { FILENAME_TOKENS, applyFilenameTemplate } from "../lib/template";
   import type {
-    DohProvider,
     MotionPreference,
     Settings,
     SettingsSection,
@@ -81,16 +79,6 @@
       },
     ),
   );
-
-  function setDohProvider(value: DohProvider) {
-    pending.doh_provider = value;
-    saveStatus = "";
-  }
-
-  function setFailClosed(value: boolean) {
-    pending.fail_closed_ech = value;
-    saveStatus = "";
-  }
 
   async function pickDownloadDir() {
     try {
@@ -183,7 +171,6 @@
 
   const sections: { id: SettingsSection; label: string }[] = [
     { id: "account", label: "Account" },
-    { id: "network", label: "Privacy & Network" },
     { id: "downloads", label: "Downloads" },
     { id: "playback", label: "Playback" },
     { id: "appearance", label: "Appearance" },
@@ -360,84 +347,6 @@
                 </div>
               </div>
             </form>
-          {:else if activeSection === "network"}
-            <div class="space-y-5 px-5 py-4">
-              <fieldset class="space-y-2">
-                <legend
-                  class="mb-1 block font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low"
-                >
-                  DoH provider
-                </legend>
-                <p class="mb-2 text-[11.5px] leading-relaxed text-room-text-mid">
-                  DNS-over-HTTPS resolver used to fetch the e621 ECH config. The selected provider
-                  sees that you connect to e621.
-                </p>
-                <div class="space-y-1">
-                  {#each dohProviderOptions as option (option.value)}
-                    {@const isSelected = pending.doh_provider === option.value}
-                    <label
-                      class="flex cursor-pointer items-start gap-3 rounded-[3px] border bg-room-panel px-3 py-2 transition-colors duration-150 {isSelected
-                        ? 'border-room-accent'
-                        : 'border-room-line hover:border-room-line-strong'}"
-                    >
-                      <input
-                        type="radio"
-                        name="doh-provider"
-                        value={option.value}
-                        checked={isSelected}
-                        disabled={saving}
-                        onchange={() => setDohProvider(option.value)}
-                        class="mt-1 accent-room-accent"
-                      />
-                      <span class="min-w-0 flex-1">
-                        <span
-                          class="block text-[12.5px] {isSelected
-                            ? 'text-room-accent'
-                            : 'text-room-text'}"
-                        >
-                          {option.label}
-                        </span>
-                        <span
-                          class="mt-0.5 block font-mono text-[10.5px] leading-relaxed text-room-text-low"
-                        >
-                          {option.description}
-                        </span>
-                      </span>
-                    </label>
-                  {/each}
-                </div>
-              </fieldset>
-
-              <div class="space-y-2 border-t border-room-line pt-4">
-                <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
-                  ECH enforcement
-                </div>
-                <label
-                  class="flex cursor-pointer items-start gap-3 rounded-[3px] border bg-room-panel px-3 py-2 transition-colors duration-150 {pending.fail_closed_ech
-                    ? 'border-room-accent'
-                    : 'border-room-line hover:border-room-line-strong'}"
-                >
-                  <input
-                    type="checkbox"
-                    checked={pending.fail_closed_ech}
-                    disabled={saving}
-                    onchange={(event) => setFailClosed(event.currentTarget.checked)}
-                    class="mt-1 accent-room-accent"
-                  />
-                  <span class="min-w-0 flex-1">
-                    <span class="block text-[12.5px] text-room-text">
-                      Require ECH for all requests
-                    </span>
-                    <span
-                      class="mt-0.5 block font-mono text-[10.5px] leading-relaxed text-room-text-low"
-                    >
-                      Refuse to connect if DoH fails or no ECH config is returned. Stronger
-                      privacy, but breaks on networks that block DoH.
-                    </span>
-                  </span>
-                </label>
-              </div>
-            </div>
           {:else if activeSection === "downloads"}
             <div class="space-y-5 px-5 py-4">
               <div class="space-y-2">

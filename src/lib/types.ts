@@ -64,7 +64,6 @@ export type CommentState = {
 
 export type SearchResponse = {
   posts: Post[];
-  ech_enabled: boolean;
 };
 
 export type TagSuggestion = {
@@ -94,8 +93,6 @@ export type OriginalViewer = {
   error: string | null;
 };
 
-export type DohProvider = "cloudflare" | "google" | "quad9" | "ad_guard";
-
 export type DownloadSettings = {
   directory: string | null;
   filename_template: string;
@@ -118,8 +115,6 @@ export type AppearanceSettings = {
 };
 
 export type Settings = {
-  doh_provider: DohProvider;
-  fail_closed_ech: boolean;
   downloads: DownloadSettings;
   playback: PlaybackSettings;
   appearance: AppearanceSettings;
@@ -127,7 +122,6 @@ export type Settings = {
 
 export type SettingsSection =
   | "account"
-  | "network"
   | "downloads"
   | "playback"
   | "appearance"
