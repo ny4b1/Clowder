@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow};
 use tokio::sync::Mutex;
 use wreq::header::{
-    ACCEPT, ACCEPT_LANGUAGE, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
-    HeaderMap, HeaderName, HeaderValue, RANGE, USER_AGENT,
+    ACCEPT, ACCEPT_LANGUAGE, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderMap,
+    HeaderName, HeaderValue, RANGE, USER_AGENT,
 };
 use wreq_util::Emulation;
 
@@ -58,10 +58,7 @@ impl Client {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-        headers.insert(
-            ACCEPT_LANGUAGE,
-            HeaderValue::from_static("en-US,en;q=0.9"),
-        );
+        headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
 
         let http = wreq::Client::builder()
             .emulation(EMULATION_PROFILE)
@@ -99,14 +96,11 @@ impl Client {
 
         let page = page.max(1);
         let limit = limit.clamp(MIN_LIMIT, MAX_LIMIT);
-        let mut req = self
-            .http
-            .get(format!("https://{HOST}/posts.json"))
-            .query(&[
-                ("tags", tags.trim()),
-                ("limit", &limit.to_string()),
-                ("page", &page.to_string()),
-            ]);
+        let mut req = self.http.get(format!("https://{HOST}/posts.json")).query(&[
+            ("tags", tags.trim()),
+            ("limit", &limit.to_string()),
+            ("page", &page.to_string()),
+        ]);
         if let Some(creds) = self.auth() {
             req = req.basic_auth(&creds.username, Some(&creds.api_key));
         }
@@ -125,7 +119,9 @@ impl Client {
         }
 
         let parsed: PostsResponse = resp.json().await.context("decode posts response")?;
-        Ok(SearchOutcome { posts: parsed.posts })
+        Ok(SearchOutcome {
+            posts: parsed.posts,
+        })
     }
 
     pub async fn autocomplete_tags(&self, term: &str, category: Option<u8>) -> Result<Vec<Tag>> {
@@ -491,9 +487,7 @@ fn header_string(headers: &HeaderMap, name: HeaderName) -> Option<String> {
 
 fn is_cloudflare_challenge(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
-    lower.contains("cdn-cgi/")
-        || lower.contains("cloudflare")
-        || lower.contains("just a moment")
+    lower.contains("cdn-cgi/") || lower.contains("cloudflare") || lower.contains("just a moment")
 }
 
 fn trim_body(body: &str) -> String {
@@ -541,8 +535,12 @@ mod tests {
         assert!(is_cloudflare_challenge(
             "<title>Cloudflare Error 1020: Access Denied</title>"
         ));
-        assert!(!is_cloudflare_challenge("regular error body without markers"));
-        assert!(!is_cloudflare_challenge("{\"success\":false,\"reason\":\"banned\"}"));
+        assert!(!is_cloudflare_challenge(
+            "regular error body without markers"
+        ));
+        assert!(!is_cloudflare_challenge(
+            "{\"success\":false,\"reason\":\"banned\"}"
+        ));
     }
 
     #[test]
