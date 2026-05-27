@@ -4,12 +4,22 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { updateStore } from "../../lib/update-store.svelte";
 
-  let appVersion = $state("");
+  // The app version never changes at runtime, so cache the result across
+  // remounts (each settings-tab change unmounts this component).
+  let cachedVersion: string | null = null;
+
+  let appVersion = $state(cachedVersion ?? "");
 
   onMount(() => {
+    if (cachedVersion !== null) return;
     void getVersion()
-      .then((value) => (appVersion = value))
-      .catch(() => (appVersion = ""));
+      .then((value) => {
+        cachedVersion = value;
+        appVersion = value;
+      })
+      .catch(() => {
+        cachedVersion = "";
+      });
   });
 </script>
 
