@@ -26,7 +26,7 @@ Download the latest build for your platform from the
 
 - **Windows** — `.exe` installer
 - **macOS** — `.dmg`
-- **Linux** — `.AppImage`
+- **Linux** — `.AppImage` *(built but not actively tested — bug reports welcome)*
 
 If e621 is blocked in your country, turn on a VPN before launching.
 
