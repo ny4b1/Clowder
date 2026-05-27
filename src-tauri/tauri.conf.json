@@ -41,7 +41,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4Rjc0QTg0MUE5NTkzMTcKUldRWGs1VWFoRXIzcUVvMlZxQ2NOTWlrNy8wc3lBMFNBSzVWRUh3OTBEQkNsRDhiOXB5alpSbmoK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3NUJFRTA2MDdGNzBFNUMKUldSY0R2Y0hCdTViZDhwRGt5a3NPS0hQQ3lkSHdRVzJkb0Nwa3NLNFVWbkdNY0tBekc0cXNOMmoK",
       "endpoints": [
         "https://github.com/nyattic/Clowder/releases/latest/download/latest.json"
       ]
