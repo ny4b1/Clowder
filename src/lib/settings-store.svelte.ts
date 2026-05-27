@@ -1,10 +1,12 @@
+import { errMsg } from "./errors";
 import { getSettings, updateSettings } from "./settings";
+import { DEFAULT_FILENAME_TEMPLATE } from "./template";
 import type { Settings } from "./types";
 
 const defaults: Settings = {
   downloads: {
     directory: null,
-    filename_template: "{artist}_{id}.{ext}",
+    filename_template: DEFAULT_FILENAME_TEMPLATE,
   },
   playback: {
     autoplay: true,
@@ -28,7 +30,7 @@ class SettingsStore {
       this.current = await getSettings();
       this.error = null;
     } catch (error) {
-      this.error = String(error);
+      this.error = errMsg(error);
     } finally {
       this.loaded = true;
     }

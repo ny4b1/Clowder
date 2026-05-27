@@ -1,4 +1,6 @@
 <script lang="ts">
+  import HeartIcon from "./icons/HeartIcon.svelte";
+  import TagGroup from "./TagGroup.svelte";
   import type { Post } from "../lib/types";
   import { dimsLabel, postLabel, tagGroups } from "../lib/search";
 
@@ -51,20 +53,7 @@
               ? 'text-room-fav'
               : 'text-room-text'}"
           >
-            <svg
-              class="size-3.5"
-              viewBox="0 0 24 24"
-              fill={selectedPost.is_favorited ? "currentColor" : "none"}
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path
-                d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-              />
-            </svg>
+            <HeartIcon filled={!!selectedPost.is_favorited} class="size-3.5" />
             <span>{(selectedPost.fav_count ?? 0).toLocaleString()}</span>
           </div>
         </div>
@@ -113,20 +102,7 @@
               ? 'border-room-fav text-room-fav hover:bg-room-fav/10'
               : 'border-room-line-strong text-room-text-mid hover:border-room-fav hover:text-room-fav'}"
           >
-            <svg
-              class="size-3"
-              viewBox="0 0 24 24"
-              fill={selectedPost.is_favorited ? "currentColor" : "none"}
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path
-                d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-              />
-            </svg>
+            <HeartIcon filled={!!selectedPost.is_favorited} />
             {selectedPost.is_favorited ? "favorited" : "favorite"}
           </button>
         </div>
@@ -136,32 +112,7 @@
       </section>
 
       {#each tagGroups(selectedPost) as [group, tags] (group)}
-        {#if tags.length > 0}
-          <section class="border-b border-room-line px-5 py-4">
-            <div class="mb-2 flex items-baseline justify-between">
-              <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
-                {group}
-              </div>
-              <div class="font-mono text-[10px] tabular-nums text-room-text-low">
-                {tags.length}
-              </div>
-            </div>
-            <div class="flex flex-wrap gap-1">
-              {#each tags.slice(0, 32) as tag}
-                <span
-                  class="inline-flex h-6 max-w-full items-center truncate rounded-[2px] border border-room-line bg-room-panel/60 px-2 font-mono text-[10.5px] text-room-text-mid"
-                >
-                  {tag}
-                </span>
-              {/each}
-              {#if tags.length > 32}
-                <span class="inline-flex h-6 items-center px-1 font-mono text-[10.5px] text-room-text-low">
-                  +{tags.length - 32} more
-                </span>
-              {/if}
-            </div>
-          </section>
-        {/if}
+        <TagGroup {group} {tags} maxVisible={32} />
       {/each}
     </div>
   {:else}

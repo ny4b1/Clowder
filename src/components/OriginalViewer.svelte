@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import CommentsPanel from "./CommentsPanel.svelte";
+  import CloseIcon from "./icons/CloseIcon.svelte";
+  import Spinner from "./icons/Spinner.svelte";
   import OriginalPostSidebar from "./OriginalPostSidebar.svelte";
-  import VideoControls from "./VideoControls.svelte";
+  import VideoPlayer from "./VideoPlayer.svelte";
   import type { CommentState, OriginalViewer as OriginalViewerState, Post } from "../lib/types";
   import { isVideoPost } from "../lib/e621";
+  import { isTextInput } from "../lib/keyboard";
   import { playbackMemory } from "../lib/playback.svelte";
   import { dimsLabel, postLabel } from "../lib/search";
   import { settingsStore } from "../lib/settings-store.svelte";
@@ -53,9 +56,7 @@
   }: Props = $props();
 
   let videoElement = $state<HTMLVideoElement | undefined>();
-  let imageOnlyVideoElement = $state<HTMLVideoElement | undefined>();
   let videoFrameElement = $state<HTMLDivElement | undefined>();
-  let imageOnlyVideoFrameElement = $state<HTMLDivElement | undefined>();
   let appVideoFullscreen = $state(false);
   let showVideoMenu = $state(false);
   let showVideoControls = $state(true);
@@ -79,11 +80,11 @@
       if (event.key === "Escape" && appVideoFullscreen) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        void exitVideoFullscreen(activeVideoElement());
+        void exitVideoFullscreen(videoElement);
         return;
       }
       if (isTextInput(event.target)) return;
-      const target = activeVideoElement();
+      const target = videoElement;
 
       if (event.key === " " || event.key === "Spacebar") {
         event.preventDefault();
@@ -108,8 +109,7 @@
       if (event.key === "f" || event.key === "F") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        const frame = imageOnly ? imageOnlyVideoFrameElement : videoFrameElement;
-        void toggleVideoFullscreen(target, frame);
+        void toggleVideoFullscreen(target, videoFrameElement);
         return;
       }
 
@@ -125,20 +125,6 @@
       window.clearTimeout(videoControlsTimer);
     };
   });
-
-  function activeVideoElement() {
-    return imageOnly ? imageOnlyVideoElement : videoElement;
-  }
-
-  function isTextInput(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) return false;
-    return (
-      target.isContentEditable ||
-      target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.tagName === "SELECT"
-    );
-  }
 
   function saveVideoPlayback(target: HTMLVideoElement | undefined) {
     if (!target || !Number.isFinite(target.currentTime)) return;
@@ -281,8 +267,7 @@
   function revealVideoControls() {
     showVideoControls = true;
     window.clearTimeout(videoControlsTimer);
-    const target = activeVideoElement();
-    if (!target || target.paused || showVideoMenu) return;
+    if (!videoElement || videoElement.paused || showVideoMenu) return;
     videoControlsTimer = window.setTimeout(() => {
       if (!showVideoMenu) {
         showVideoControls = false;
@@ -308,62 +293,46 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="fixed inset-0 z-50 bg-room-floor" onclick={onToggleImageOnly}>
     {#if viewer.loading}
-      <span
-        class="absolute left-1/2 top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
-        aria-hidden="true"
-      ></span>
+      <span class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+        <Spinner class="size-4 border border-room-line-strong border-t-room-accent" />
+      </span>
     {:else if viewer.error}
       <div class="absolute left-1/2 top-1/2 max-w-lg -translate-x-1/2 -translate-y-1/2 text-center font-mono text-[11px] leading-relaxed text-room-fav">
         {viewer.error}
       </div>
     {:else if viewer.dataUrl && isVideoPost(viewer.post)}
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        bind:this={imageOnlyVideoFrameElement}
-        class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-black' : 'absolute inset-4'}"
-        onclick={(event) => event.stopPropagation()}
-        onmousemove={revealVideoControls}
-        onmouseenter={revealVideoControls}
-        onmouseleave={hideVideoControls}
-      >
-        <video
-          bind:this={imageOnlyVideoElement}
-          class="h-full w-full object-contain"
-          src={viewer.dataUrl}
-          autoplay={settingsStore.current.playback.autoplay}
-          loop
-          onclick={(event) => event.stopPropagation()}
-          ontimeupdate={() => saveVideoPlayback(imageOnlyVideoElement)}
-          onpause={() => saveVideoPlayback(imageOnlyVideoElement)}
-          onplay={() => {
-            saveVideoPlayback(imageOnlyVideoElement);
-            revealVideoControls();
-          }}
-          onvolumechange={() => syncVideoUi(imageOnlyVideoElement)}
-          onloadedmetadata={() => {
-            applyRememberedAudio(imageOnlyVideoElement);
-            syncVideoUi(imageOnlyVideoElement);
-            restoreVideoPlayback(imageOnlyVideoElement);
-          }}
-        ></video>
-        <VideoControls
-          target={imageOnlyVideoElement}
-          frame={imageOnlyVideoFrameElement}
-          {videoUi}
-          showControls={showVideoControls}
-          showMenu={showVideoMenu}
-          onReveal={revealVideoControls}
-          onTogglePlayback={toggleVideoPlayback}
-          onSeek={seekVideo}
-          onToggleMute={toggleVideoMute}
-          onSetVolume={setVideoVolume}
-          onToggleFullscreen={toggleVideoFullscreen}
-          onToggleMenu={toggleVideoMenu}
-          onSetRate={setVideoRate}
-          onCopyUrl={copyVideoUrl}
-        />
-      </div>
+      <VideoPlayer
+        src={viewer.dataUrl}
+        autoplay={settingsStore.current.playback.autoplay}
+        {appVideoFullscreen}
+        {videoUi}
+        showControls={showVideoControls}
+        showMenu={showVideoMenu}
+        bind:videoElement
+        bind:frameElement={videoFrameElement}
+        onTimeUpdate={saveVideoPlayback}
+        onPause={saveVideoPlayback}
+        onPlay={(target) => {
+          saveVideoPlayback(target);
+          revealVideoControls();
+        }}
+        onVolumeChange={syncVideoUi}
+        onLoadedMetadata={(target) => {
+          applyRememberedAudio(target);
+          syncVideoUi(target);
+          restoreVideoPlayback(target);
+        }}
+        onReveal={revealVideoControls}
+        onHide={hideVideoControls}
+        onTogglePlayback={toggleVideoPlayback}
+        onSeek={seekVideo}
+        onToggleMute={toggleVideoMute}
+        onSetVolume={setVideoVolume}
+        onToggleFullscreen={toggleVideoFullscreen}
+        onToggleMenu={toggleVideoMenu}
+        onSetRate={setVideoRate}
+        onCopyUrl={copyVideoUrl}
+      />
     {:else if viewer.dataUrl}
       <img
         class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain"
@@ -393,19 +362,7 @@
         class="flex size-8 items-center justify-center rounded-[3px] border border-room-line bg-room-panel text-room-text-mid transition-colors duration-150 hover:border-room-line-strong hover:text-room-text"
         aria-label="Close original"
       >
-        <svg
-          class="size-3.5"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M18 6 6 18" />
-          <path d="m6 6 12 12" />
-        </svg>
+        <CloseIcon />
       </button>
     </div>
 
@@ -421,60 +378,46 @@
       <div class="grid min-h-0 grid-rows-[minmax(0,1fr)_minmax(220px,34vh)]">
         <div class="relative min-h-0 overflow-hidden">
           {#if viewer.loading}
-            <span
-              class="absolute left-1/2 top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
-              aria-hidden="true"
-            ></span>
+            <span class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+              <Spinner class="size-4 border border-room-line-strong border-t-room-accent" />
+            </span>
           {:else if viewer.error}
             <div class="absolute left-1/2 top-1/2 max-w-lg -translate-x-1/2 -translate-y-1/2 text-center font-mono text-[11px] leading-relaxed text-room-fav">
               {viewer.error}
             </div>
           {:else if viewer.dataUrl && isVideoPost(viewer.post)}
-            <!-- svelte-ignore a11y_media_has_caption -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              bind:this={videoFrameElement}
-              class="{appVideoFullscreen ? 'fixed inset-0 z-[70] bg-black' : 'absolute inset-4'}"
-              onmousemove={revealVideoControls}
-              onmouseenter={revealVideoControls}
-              onmouseleave={hideVideoControls}
-            >
-              <video
-                bind:this={videoElement}
-                class="h-full w-full object-contain"
-                src={viewer.dataUrl}
-                autoplay={settingsStore.current.playback.autoplay}
-                loop
-                ontimeupdate={() => saveVideoPlayback(videoElement)}
-                onpause={() => saveVideoPlayback(videoElement)}
-                onplay={() => {
-                  saveVideoPlayback(videoElement);
-                  revealVideoControls();
-                }}
-                onvolumechange={() => syncVideoUi(videoElement)}
-                onloadedmetadata={() => {
-                  applyRememberedAudio(videoElement);
-                  syncVideoUi(videoElement);
-                  restoreVideoPlayback(videoElement);
-                }}
-              ></video>
-              <VideoControls
-                target={videoElement}
-                frame={videoFrameElement}
-                {videoUi}
-                showControls={showVideoControls}
-                showMenu={showVideoMenu}
-                onReveal={revealVideoControls}
-                onTogglePlayback={toggleVideoPlayback}
-                onSeek={seekVideo}
-                onToggleMute={toggleVideoMute}
-                onSetVolume={setVideoVolume}
-                onToggleFullscreen={toggleVideoFullscreen}
-                onToggleMenu={toggleVideoMenu}
-                onSetRate={setVideoRate}
-                onCopyUrl={copyVideoUrl}
-              />
-            </div>
+            <VideoPlayer
+              src={viewer.dataUrl}
+              autoplay={settingsStore.current.playback.autoplay}
+              {appVideoFullscreen}
+              {videoUi}
+              showControls={showVideoControls}
+              showMenu={showVideoMenu}
+              bind:videoElement
+              bind:frameElement={videoFrameElement}
+              onTimeUpdate={saveVideoPlayback}
+              onPause={saveVideoPlayback}
+              onPlay={(target) => {
+                saveVideoPlayback(target);
+                revealVideoControls();
+              }}
+              onVolumeChange={syncVideoUi}
+              onLoadedMetadata={(target) => {
+                applyRememberedAudio(target);
+                syncVideoUi(target);
+                restoreVideoPlayback(target);
+              }}
+              onReveal={revealVideoControls}
+              onHide={hideVideoControls}
+              onTogglePlayback={toggleVideoPlayback}
+              onSeek={seekVideo}
+              onToggleMute={toggleVideoMute}
+              onSetVolume={setVideoVolume}
+              onToggleFullscreen={toggleVideoFullscreen}
+              onToggleMenu={toggleVideoMenu}
+              onSetRate={setVideoRate}
+              onCopyUrl={copyVideoUrl}
+            />
           {:else if viewer.dataUrl}
             <button
               type="button"

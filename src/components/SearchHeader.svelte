@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Spinner from "./icons/Spinner.svelte";
   import type { TagSuggestion } from "../lib/types";
   import { fetchTagSuggestions } from "../lib/e621";
   import {
@@ -207,10 +208,7 @@
         class="flex items-center gap-1.5 border-l border-room-line px-3.5 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-text-mid transition-colors duration-150 hover:bg-room-panel-hi hover:text-room-text disabled:opacity-50"
       >
         {#if loading}
-          <span
-            class="size-2.5 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
-            aria-hidden="true"
-          ></span>
+          <Spinner class="size-2.5 border border-room-line-strong border-t-room-accent" />
         {/if}
         search
       </button>

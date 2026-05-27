@@ -1,5 +1,8 @@
 <script lang="ts">
+  import Spinner from "./icons/Spinner.svelte";
+  import TagGroup from "./TagGroup.svelte";
   import type { Post } from "../lib/types";
+  import { errMsg } from "../lib/errors";
   import { postLabel, tagGroups } from "../lib/search";
 
   type Props = {
@@ -41,7 +44,7 @@
       tagEditorOpen = false;
       tagEditStatus = "";
     } catch (error) {
-      tagEditStatus = String(error);
+      tagEditStatus = errMsg(error);
     } finally {
       tagEditPending = false;
     }
@@ -127,10 +130,7 @@
             class="inline-flex h-7 items-center gap-1.5 rounded-[3px] border border-room-accent bg-room-accent/10 px-2.5 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-accent transition-colors duration-150 hover:bg-room-accent/20 disabled:opacity-50"
           >
             {#if tagEditPending}
-              <span
-                class="size-2.5 animate-spin rounded-full border border-room-accent/40 border-t-room-accent"
-                aria-hidden="true"
-              ></span>
+              <Spinner class="size-2.5 border border-room-accent/40 border-t-room-accent" />
             {/if}
             save
           </button>
@@ -140,28 +140,6 @@
   </section>
 
   {#each tagGroups(post) as [group, tags] (group)}
-    {#if tags.length > 0}
-      <section class="border-b border-room-line px-4 py-3">
-        <div class="mb-2 flex items-baseline justify-between">
-          <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
-            {group}
-          </div>
-          <div class="font-mono text-[10px] tabular-nums text-room-text-low">
-            {tags.length}
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-1">
-          {#each tags as tag}
-            <button
-              type="button"
-              onclick={() => onSearchTag(tag)}
-              class="inline-flex h-6 max-w-full items-center truncate rounded-[2px] border border-room-line bg-room-panel px-2 font-mono text-[10.5px] text-room-text-mid transition-colors duration-150 hover:border-room-accent hover:text-room-accent"
-            >
-              {tag}
-            </button>
-          {/each}
-        </div>
-      </section>
-    {/if}
+    <TagGroup {group} {tags} padding="tight" onTagClick={onSearchTag} />
   {/each}
 </aside>

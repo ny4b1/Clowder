@@ -1,4 +1,5 @@
 import { createComment, fetchComments, hideComment, mediaUrl, originalUrl } from "./e621";
+import { errMsg } from "./errors";
 import type { CommentState, OriginalViewer, Post } from "./types";
 
 const emptyComments: CommentState = {
@@ -43,7 +44,7 @@ class ViewerStore {
       }
     } catch (error) {
       if (this.viewer?.post.id === post.id) {
-        this.viewer = { ...this.viewer, dataUrl: null, loading: false, error: String(error) };
+        this.viewer = { ...this.viewer, dataUrl: null, loading: false, error: errMsg(error) };
       }
     }
   }
@@ -84,7 +85,7 @@ class ViewerStore {
       }
     } catch (error) {
       if (this.viewer?.post.id === postId) {
-        this.comments = { ...this.comments, items: [], loading: false, error: String(error) };
+        this.comments = { ...this.comments, items: [], loading: false, error: errMsg(error) };
       }
     }
   }
@@ -116,7 +117,7 @@ class ViewerStore {
       };
       return nextCount;
     } catch (error) {
-      this.comments = { ...this.comments, submitting: false, submitError: String(error) };
+      this.comments = { ...this.comments, submitting: false, submitError: errMsg(error) };
       return null;
     }
   }
@@ -140,7 +141,7 @@ class ViewerStore {
     } catch (error) {
       this.comments = {
         ...this.comments,
-        submitError: String(error),
+        submitError: errMsg(error),
         hiding: { ...this.comments.hiding, [commentId]: false },
       };
     }

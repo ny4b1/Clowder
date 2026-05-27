@@ -1,4 +1,5 @@
 import { getAccount, signIn as signInApi, signOutAccount } from "./e621";
+import { errMsg } from "./errors";
 
 class AccountStore {
   username = $state<string | null>(null);
@@ -23,7 +24,7 @@ class AccountStore {
       this.status = "";
       return true;
     } catch (error) {
-      this.status = String(error);
+      this.status = errMsg(error);
       return false;
     } finally {
       this.saving = false;
@@ -38,7 +39,7 @@ class AccountStore {
       this.username = null;
       return true;
     } catch (error) {
-      this.status = String(error);
+      this.status = errMsg(error);
       return false;
     } finally {
       this.saving = false;

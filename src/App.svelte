@@ -9,6 +9,7 @@
   import Toolbar from "./components/Toolbar.svelte";
   import { accountStore } from "./lib/account-store.svelte";
   import { downloadStore } from "./lib/download-store.svelte";
+  import { isTextInput } from "./lib/keyboard";
   import { postActionsStore } from "./lib/post-actions-store.svelte";
   import { searchHistoryStore } from "./lib/search-history-store.svelte";
   import { searchStore } from "./lib/search-store.svelte";
@@ -109,16 +110,6 @@
 
     root.style.setProperty("--clowder-tile-min", `${appearance.grid_min_tile_px}px`);
   });
-
-  function isTextInput(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) return false;
-    return (
-      target.isContentEditable ||
-      target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.tagName === "SELECT"
-    );
-  }
 
   function onWindowKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
@@ -303,7 +294,7 @@
     onQueryChange={(value) => searchStore.setQuery(value)}
     onSearch={() => search()}
     onOpenAccount={() => openSettings("account")}
-    onOpenSettings={() => openSettings("network")}
+    onOpenSettings={() => openSettings("downloads")}
     onPageChange={goToPage}
   />
 

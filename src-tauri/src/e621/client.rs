@@ -73,9 +73,14 @@ impl Client {
             .build()
             .context("build wreq client")?;
 
+        // checked_sub avoids panicking on platforms where Instant::now() is close to its epoch.
+        let initial_limiter = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+
         Ok(Self {
             http,
-            limiter: Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1))),
+            limiter: Arc::new(Mutex::new(initial_limiter)),
             credentials: Arc::new(RwLock::new(None)),
         })
     }
@@ -96,21 +101,34 @@ impl Client {
         self.credentials.read().expect("credentials lock").clone()
     }
 
+    fn apply_auth(&self, req: wreq::RequestBuilder) -> wreq::RequestBuilder {
+        match self.auth() {
+            Some(creds) => req.basic_auth(&creds.username, Some(&creds.api_key)),
+            None => req,
+        }
+    }
+
+    fn require_auth(&self, action: &'static str) -> Result<Credentials> {
+        self.auth()
+            .ok_or_else(|| anyhow!("login required to {action}"))
+    }
+
     pub async fn search(&self, tags: &str, page: u32, limit: u32) -> Result<SearchOutcome> {
         self.wait_for_api_slot().await;
 
         let page = page.max(1);
         let limit = limit.clamp(MIN_LIMIT, MAX_LIMIT);
-        let mut req = self.http.get(format!("https://{HOST}/posts.json")).query(&[
+        let req = self.http.get(format!("https://{HOST}/posts.json")).query(&[
             ("tags", tags.trim()),
             ("limit", &limit.to_string()),
             ("page", &page.to_string()),
         ]);
-        if let Some(creds) = self.auth() {
-            req = req.basic_auth(&creds.username, Some(&creds.api_key));
-        }
 
-        let resp = req.send().await.context("send e621 search request")?;
+        let resp = self
+            .apply_auth(req)
+            .send()
+            .await
+            .context("send e621 search request")?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -152,23 +170,18 @@ impl Client {
             query.push(("search[category]", category.to_string()));
         }
 
-        let mut req = self
-            .http
-            .get(format!("https://{HOST}/tags.json"))
-            .query(&query);
-        if let Some(creds) = self.auth() {
-            req = req.basic_auth(&creds.username, Some(&creds.api_key));
-        }
+        let resp = self
+            .apply_auth(
+                self.http
+                    .get(format!("https://{HOST}/tags.json"))
+                    .query(&query),
+            )
+            .send()
+            .await
+            .context("send tag autocomplete request")?;
 
-        let resp = req.send().await.context("send tag autocomplete request")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "tag autocomplete failed: HTTP {status} {}",
-                trim_body(&body)
-            ));
+        if !resp.status().is_success() {
+            return Err(fail_with_body(resp, "tag autocomplete").await);
         }
 
         match resp
@@ -215,9 +228,7 @@ impl Client {
     }
 
     pub async fn favorite(&self, post_id: u64) -> Result<()> {
-        let creds = self
-            .auth()
-            .ok_or_else(|| anyhow!("login required to favorite"))?;
+        let creds = self.require_auth("favorite")?;
         self.wait_for_api_slot().await;
 
         let resp = self
@@ -233,17 +244,11 @@ impl Client {
         if status.is_success() || status.as_u16() == 422 {
             return Ok(());
         }
-        let body = resp.text().await.unwrap_or_default();
-        Err(anyhow!(
-            "favorite failed: HTTP {status} {}",
-            trim_body(&body)
-        ))
+        Err(fail_with_body(resp, "favorite").await)
     }
 
     pub async fn unfavorite(&self, post_id: u64) -> Result<()> {
-        let creds = self
-            .auth()
-            .ok_or_else(|| anyhow!("login required to unfavorite"))?;
+        let creds = self.require_auth("unfavorite")?;
         self.wait_for_api_slot().await;
 
         let resp = self
@@ -258,11 +263,149 @@ impl Client {
         if status.is_success() || status.as_u16() == 404 {
             return Ok(());
         }
-        let body = resp.text().await.unwrap_or_default();
-        Err(anyhow!(
-            "unfavorite failed: HTTP {status} {}",
-            trim_body(&body)
-        ))
+        Err(fail_with_body(resp, "unfavorite").await)
+    }
+
+    pub async fn update_post_tags(
+        &self,
+        post_id: u64,
+        tag_string_diff: &str,
+        edit_reason: &str,
+    ) -> Result<Post> {
+        let creds = self.require_auth("edit tags")?;
+        let tag_string_diff = tag_string_diff.trim();
+        if tag_string_diff.is_empty() {
+            return Err(anyhow!("tag changes are required"));
+        }
+
+        self.wait_for_api_slot().await;
+
+        let mut form = vec![("post[tag_string_diff]", tag_string_diff.to_string())];
+        let edit_reason = edit_reason.trim();
+        if !edit_reason.is_empty() {
+            form.push(("post[edit_reason]", edit_reason.to_string()));
+        }
+
+        let resp = self
+            .http
+            .patch(format!("https://{HOST}/posts/{post_id}.json"))
+            .form(&form)
+            .basic_auth(&creds.username, Some(&creds.api_key))
+            .send()
+            .await
+            .context("send post tag update request")?;
+
+        if !resp.status().is_success() {
+            return Err(fail_with_body(resp, "tag update").await);
+        }
+
+        match resp
+            .json::<PostUpdateResponse>()
+            .await
+            .context("decode updated post response")?
+        {
+            PostUpdateResponse::Post(post) | PostUpdateResponse::Wrapped { post } => Ok(post),
+        }
+    }
+
+    pub async fn comments(&self, post_id: u64, limit: u32) -> Result<Vec<Comment>> {
+        self.wait_for_api_slot().await;
+
+        let limit = limit.clamp(1, MAX_LIMIT);
+        let resp = self
+            .apply_auth(
+                self.http
+                    .get(format!("https://{HOST}/comments.json"))
+                    .query(&[
+                        ("search[post_id]", post_id.to_string()),
+                        ("limit", limit.to_string()),
+                        ("group_by", "comment".to_string()),
+                    ]),
+            )
+            .send()
+            .await
+            .context("send comments request")?;
+
+        if !resp.status().is_success() {
+            return Err(fail_with_body(resp, "comments").await);
+        }
+
+        match resp
+            .json::<CommentsResponse>()
+            .await
+            .context("decode comments response")?
+        {
+            CommentsResponse::List(comments) | CommentsResponse::Empty { comments } => Ok(comments),
+        }
+    }
+
+    pub async fn create_comment(&self, post_id: u64, body: &str) -> Result<Comment> {
+        let creds = self.require_auth("comment")?;
+        let body = body.trim();
+        if body.is_empty() {
+            return Err(anyhow!("comment body is required"));
+        }
+
+        self.wait_for_api_slot().await;
+
+        let resp = self
+            .http
+            .post(format!("https://{HOST}/comments.json"))
+            .form(&[
+                ("comment[post_id]", post_id.to_string()),
+                ("comment[body]", body.to_string()),
+            ])
+            .basic_auth(&creds.username, Some(&creds.api_key))
+            .send()
+            .await
+            .context("send create comment request")?;
+
+        if !resp.status().is_success() {
+            return Err(fail_with_body(resp, "comment").await);
+        }
+
+        match resp
+            .json::<CommentCreateResponse>()
+            .await
+            .context("decode created comment response")?
+        {
+            CommentCreateResponse::Comment(comment)
+            | CommentCreateResponse::Wrapped { comment } => Ok(comment),
+        }
+    }
+
+    pub async fn hide_comment(&self, comment_id: u64) -> Result<Comment> {
+        let creds = self.require_auth("hide comments")?;
+
+        self.wait_for_api_slot().await;
+
+        let resp = self
+            .http
+            .post(format!("https://{HOST}/comments/{comment_id}/hide.json"))
+            .basic_auth(&creds.username, Some(&creds.api_key))
+            .send()
+            .await
+            .context("send hide comment request")?;
+
+        if !resp.status().is_success() {
+            return Err(fail_with_body(resp, "hide comment").await);
+        }
+
+        let body = resp.text().await.context("read hidden comment response")?;
+        if body.trim().is_empty() {
+            return Ok(Comment {
+                id: comment_id,
+                is_hidden: true,
+                ..Comment::default()
+            });
+        }
+
+        match serde_json::from_str::<CommentUpdateResponse>(&body)
+            .context("decode hidden comment response")?
+        {
+            CommentUpdateResponse::Comment(comment)
+            | CommentUpdateResponse::Wrapped { comment } => Ok(comment),
+        }
     }
 
     pub async fn download_to_file(&self, url: &str, dest: &Path, max_bytes: u64) -> Result<u64> {
@@ -273,10 +416,8 @@ impl Client {
             .to_string();
 
         let mut req = self.http.get(parsed.as_str());
-        if host_accepts_credentials(&host)
-            && let Some(creds) = self.auth()
-        {
-            req = req.basic_auth(&creds.username, Some(&creds.api_key));
+        if host_accepts_credentials(&host) {
+            req = self.apply_auth(req);
         }
 
         let mut resp = req.send().await.context("send download request")?;
@@ -322,10 +463,8 @@ impl Client {
         if let Some(range) = range {
             req = req.header(RANGE, range);
         }
-        if host_accepts_credentials(&host)
-            && let Some(creds) = self.auth()
-        {
-            req = req.basic_auth(&creds.username, Some(&creds.api_key));
+        if host_accepts_credentials(&host) {
+            req = self.apply_auth(req);
         }
 
         let mut resp = req.send().await.context("send media request")?;
@@ -371,175 +510,6 @@ impl Client {
     }
 }
 
-impl Client {
-    pub async fn update_post_tags(
-        &self,
-        post_id: u64,
-        tag_string_diff: &str,
-        edit_reason: &str,
-    ) -> Result<Post> {
-        let creds = self
-            .auth()
-            .ok_or_else(|| anyhow!("login required to edit tags"))?;
-        let tag_string_diff = tag_string_diff.trim();
-        if tag_string_diff.is_empty() {
-            return Err(anyhow!("tag changes are required"));
-        }
-
-        self.wait_for_api_slot().await;
-
-        let mut form = vec![("post[tag_string_diff]", tag_string_diff.to_string())];
-        let edit_reason = edit_reason.trim();
-        if !edit_reason.is_empty() {
-            form.push(("post[edit_reason]", edit_reason.to_string()));
-        }
-
-        let resp = self
-            .http
-            .patch(format!("https://{HOST}/posts/{post_id}.json"))
-            .form(&form)
-            .basic_auth(&creds.username, Some(&creds.api_key))
-            .send()
-            .await
-            .context("send post tag update request")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "tag update failed: HTTP {status} {}",
-                trim_body(&body)
-            ));
-        }
-
-        match resp
-            .json::<PostUpdateResponse>()
-            .await
-            .context("decode updated post response")?
-        {
-            PostUpdateResponse::Post(post) | PostUpdateResponse::Wrapped { post } => Ok(post),
-        }
-    }
-
-    pub async fn comments(&self, post_id: u64, limit: u32) -> Result<Vec<Comment>> {
-        self.wait_for_api_slot().await;
-
-        let limit = limit.clamp(1, MAX_LIMIT);
-        let mut req = self
-            .http
-            .get(format!("https://{HOST}/comments.json"))
-            .query(&[
-                ("search[post_id]", post_id.to_string()),
-                ("limit", limit.to_string()),
-                ("group_by", "comment".to_string()),
-            ]);
-        if let Some(creds) = self.auth() {
-            req = req.basic_auth(&creds.username, Some(&creds.api_key));
-        }
-
-        let resp = req.send().await.context("send comments request")?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "comments failed: HTTP {status} {}",
-                trim_body(&body)
-            ));
-        }
-
-        match resp
-            .json::<CommentsResponse>()
-            .await
-            .context("decode comments response")?
-        {
-            CommentsResponse::List(comments) | CommentsResponse::Empty { comments } => Ok(comments),
-        }
-    }
-
-    pub async fn create_comment(&self, post_id: u64, body: &str) -> Result<Comment> {
-        let creds = self
-            .auth()
-            .ok_or_else(|| anyhow!("login required to comment"))?;
-        let body = body.trim();
-        if body.is_empty() {
-            return Err(anyhow!("comment body is required"));
-        }
-
-        self.wait_for_api_slot().await;
-
-        let resp = self
-            .http
-            .post(format!("https://{HOST}/comments.json"))
-            .form(&[
-                ("comment[post_id]", post_id.to_string()),
-                ("comment[body]", body.to_string()),
-            ])
-            .basic_auth(&creds.username, Some(&creds.api_key))
-            .send()
-            .await
-            .context("send create comment request")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "comment failed: HTTP {status} {}",
-                trim_body(&body)
-            ));
-        }
-
-        match resp
-            .json::<CommentCreateResponse>()
-            .await
-            .context("decode created comment response")?
-        {
-            CommentCreateResponse::Comment(comment)
-            | CommentCreateResponse::Wrapped { comment } => Ok(comment),
-        }
-    }
-
-    pub async fn hide_comment(&self, comment_id: u64) -> Result<Comment> {
-        let creds = self
-            .auth()
-            .ok_or_else(|| anyhow!("login required to hide comments"))?;
-
-        self.wait_for_api_slot().await;
-
-        let resp = self
-            .http
-            .post(format!("https://{HOST}/comments/{comment_id}/hide.json"))
-            .basic_auth(&creds.username, Some(&creds.api_key))
-            .send()
-            .await
-            .context("send hide comment request")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "hide comment failed: HTTP {status} {}",
-                trim_body(&body)
-            ));
-        }
-
-        let body = resp.text().await.context("read hidden comment response")?;
-        if body.trim().is_empty() {
-            return Ok(Comment {
-                id: comment_id,
-                is_hidden: true,
-                ..Comment::default()
-            });
-        }
-
-        match serde_json::from_str::<CommentUpdateResponse>(&body)
-            .context("decode hidden comment response")?
-        {
-            CommentUpdateResponse::Comment(comment)
-            | CommentUpdateResponse::Wrapped { comment } => Ok(comment),
-        }
-    }
-}
-
 fn header_string(headers: &HeaderMap, name: HeaderName) -> Option<String> {
     headers
         .get(name)
@@ -566,6 +536,12 @@ fn trim_body(body: &str) -> String {
         out.push_str("...");
     }
     out
+}
+
+async fn fail_with_body(resp: wreq::Response, action: &str) -> anyhow::Error {
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    anyhow!("{action} failed: HTTP {status} {}", trim_body(&body))
 }
 
 #[cfg(test)]

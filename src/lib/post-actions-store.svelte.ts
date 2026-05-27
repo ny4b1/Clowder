@@ -1,4 +1,5 @@
 import { favoritePost, unfavoritePost, updatePostTags } from "./e621";
+import { errMsg } from "./errors";
 import { searchStore } from "./search-store.svelte";
 import { viewerStore } from "./viewer-store.svelte";
 import type { Post } from "./types";
@@ -15,7 +16,6 @@ class PostActionsStore {
 
     const wasFavorited = post.is_favorited === true;
     this.favoritePending[post.id] = true;
-    this.favoritePending = { ...this.favoritePending };
 
     try {
       if (wasFavorited) {
@@ -31,10 +31,9 @@ class PostActionsStore {
       viewerStore.updateViewerPost(post.id, patch);
       return null;
     } catch (error) {
-      return String(error);
+      return errMsg(error);
     } finally {
       delete this.favoritePending[post.id];
-      this.favoritePending = { ...this.favoritePending };
     }
   }
 

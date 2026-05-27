@@ -1,4 +1,6 @@
 <script lang="ts">
+  import HeartIcon from "./icons/HeartIcon.svelte";
+  import Spinner from "./icons/Spinner.svelte";
   import type { Post } from "../lib/types";
   import { compact, postLabel, scoreTotal } from "../lib/search";
 
@@ -129,10 +131,7 @@
     <div class="grid h-full place-items-center px-6">
       <div class="max-w-md text-center">
         {#if loading}
-          <span
-            class="inline-block size-4 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
-            aria-hidden="true"
-          ></span>
+          <Spinner class="size-4 border border-room-line-strong border-t-room-accent" />
           <div class="mt-3 font-mono text-[10px] uppercase tracking-[0.25em] text-room-text-low">
             searching
           </div>
@@ -188,10 +187,9 @@
                 no preview
               </span>
             {:else}
-              <span
-                class="absolute left-1/2 top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 animate-spin rounded-full border border-room-line-strong border-t-room-text-mid"
-                aria-hidden="true"
-              ></span>
+              <span class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                <Spinner class="size-3 border border-room-line-strong border-t-room-text-mid" />
+              </span>
             {/if}
           </div>
           <div class="h-16 overflow-hidden border-t border-room-line px-2.5 py-1.5">
@@ -224,20 +222,7 @@
                   ? 'text-room-fav'
                   : 'text-room-text-mid'}"
               >
-                <svg
-                  class="size-3 shrink-0"
-                  viewBox="0 0 24 24"
-                  fill={post.is_favorited ? "currentColor" : "none"}
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-                  />
-                </svg>
+                <HeartIcon filled={!!post.is_favorited} class="size-3 shrink-0" />
                 {compact(post.fav_count ?? 0)}
               </span>
             </div>

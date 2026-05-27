@@ -1,4 +1,5 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
+import { errMsg } from "./errors";
 import { toastStore } from "./toast-store.svelte";
 
 type Status = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
@@ -27,8 +28,9 @@ class UpdateStore {
       }
     } catch (error) {
       this.status = "error";
-      this.error = String(error);
-      if (!silent) toastStore.error(`Update check failed: ${String(error)}`);
+      const message = errMsg(error);
+      this.error = message;
+      if (!silent) toastStore.error(`Update check failed: ${message}`);
     }
   }
 
@@ -58,8 +60,9 @@ class UpdateStore {
       });
     } catch (error) {
       this.status = "error";
-      this.error = String(error);
-      toastStore.error(`Update failed: ${String(error)}`);
+      const message = errMsg(error);
+      this.error = message;
+      toastStore.error(`Update failed: ${message}`);
     }
   }
 }

@@ -1,4 +1,5 @@
 import { mediaUrl, searchPosts, thumbnailUrl } from "./e621";
+import { errMsg } from "./errors";
 import { queryWithSort, sortModeFromQuery } from "./search";
 import { toastStore } from "./toast-store.svelte";
 import type { Post, Preset, SortMode } from "./types";
@@ -77,9 +78,7 @@ class SearchStore {
 
   markPreviewFailed(postId: number) {
     delete this.previews[postId];
-    this.previews = { ...this.previews };
     this.failedPreviews[postId] = true;
-    this.failedPreviews = { ...this.failedPreviews };
   }
 
   async search(targetPage: number, limit: number) {
@@ -109,7 +108,7 @@ class SearchStore {
         void this.loadPreview(post);
       }
     } catch (error) {
-      const message = `search failed: ${String(error)}`;
+      const message = `search failed: ${errMsg(error)}`;
       this.status = message;
       toastStore.error(message);
     } finally {

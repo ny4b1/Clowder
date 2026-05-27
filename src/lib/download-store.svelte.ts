@@ -1,6 +1,7 @@
 import { downloadFile, originalUrl } from "./e621";
+import { errMsg } from "./errors";
 import { settingsStore } from "./settings-store.svelte";
-import { applyFilenameTemplate } from "./template";
+import { DEFAULT_FILENAME_TEMPLATE, applyFilenameTemplate } from "./template";
 import { toastStore } from "./toast-store.svelte";
 import type { Post } from "./types";
 
@@ -21,23 +22,21 @@ class DownloadStore {
     if (!url || this.pending[post.id]) return;
 
     this.pending[post.id] = true;
-    this.pending = { ...this.pending };
     this.status = "downloading";
 
     try {
       const template =
-        settingsStore.current.downloads.filename_template.trim() || "{artist}_{id}.{ext}";
+        settingsStore.current.downloads.filename_template.trim() || DEFAULT_FILENAME_TEMPLATE;
       const filename = applyFilenameTemplate(template, post);
       const path = await downloadFile(url, filename);
       this.status = `saved ${path}`;
       toastStore.success(`saved ${path}`);
     } catch (error) {
-      const message = `download failed: ${String(error)}`;
+      const message = `download failed: ${errMsg(error)}`;
       this.status = message;
       toastStore.error(message);
     } finally {
       delete this.pending[post.id];
-      this.pending = { ...this.pending };
     }
   }
 }

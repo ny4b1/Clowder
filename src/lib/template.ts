@@ -1,5 +1,7 @@
 import type { Post } from "./types";
 
+export const DEFAULT_FILENAME_TEMPLATE = "{artist}_{id}.{ext}";
+
 export const FILENAME_TOKENS = [
   { token: "{artist}", description: "first artist tag (or 'unknown_artist')" },
   { token: "{id}", description: "post id" },

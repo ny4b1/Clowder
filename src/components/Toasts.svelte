@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CloseIcon from "./icons/CloseIcon.svelte";
   import { toastStore } from "../lib/toast-store.svelte";
 </script>
 
@@ -34,19 +35,7 @@
         class="-mr-1 -mt-1 flex size-6 shrink-0 items-center justify-center rounded-[3px] text-room-text-low transition-colors duration-150 hover:text-room-text"
         aria-label="Dismiss notification"
       >
-        <svg
-          class="size-3"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M18 6 6 18" />
-          <path d="m6 6 12 12" />
-        </svg>
+        <CloseIcon class="size-3" />
       </button>
     </div>
   {/each}

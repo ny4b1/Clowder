@@ -1,4 +1,6 @@
 <script lang="ts">
+  import HeartIcon from "./icons/HeartIcon.svelte";
+  import Spinner from "./icons/Spinner.svelte";
   import type { CommentState, Post } from "../lib/types";
 
   type Props = {
@@ -65,20 +67,7 @@
         ? 'border-room-fav text-room-fav hover:bg-room-fav/10'
         : 'border-room-line-strong text-room-text-mid hover:border-room-fav hover:text-room-fav'}"
     >
-      <svg
-        class="size-3"
-        viewBox="0 0 24 24"
-        fill={post.is_favorited ? "currentColor" : "none"}
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <path
-          d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-        />
-      </svg>
+      <HeartIcon filled={!!post.is_favorited} />
       {post.is_favorited ? "favorited" : "favorite"}
     </button>
 
@@ -89,10 +78,7 @@
       class="inline-flex h-8 items-center gap-1.5 rounded-[3px] border border-room-line-strong bg-room-panel px-3 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-text-mid transition-colors duration-150 hover:border-room-accent hover:text-room-accent disabled:opacity-50"
     >
       {#if downloadPending}
-        <span
-          class="size-2.5 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
-          aria-hidden="true"
-        ></span>
+        <Spinner class="size-2.5 border border-room-line-strong border-t-room-accent" />
       {/if}
       download
     </button>
@@ -126,10 +112,7 @@
 
       {#if comments.loading}
         <div class="flex h-16 items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-text-low">
-          <span
-            class="size-3 animate-spin rounded-full border border-room-line-strong border-t-room-accent"
-            aria-hidden="true"
-          ></span>
+          <Spinner class="size-3 border border-room-line-strong border-t-room-accent" />
           loading
         </div>
       {:else if comments.error}
@@ -209,10 +192,7 @@
             class="inline-flex h-8 items-center gap-1.5 rounded-[3px] border border-room-accent bg-room-accent/10 px-3 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-accent transition-colors duration-150 hover:bg-room-accent/20 disabled:opacity-50"
           >
             {#if comments.submitting}
-              <span
-                class="size-2.5 animate-spin rounded-full border border-room-accent/40 border-t-room-accent"
-                aria-hidden="true"
-              ></span>
+              <Spinner class="size-2.5 border border-room-accent/40 border-t-room-accent" />
             {/if}
             post
           </button>
