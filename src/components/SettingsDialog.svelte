@@ -46,7 +46,7 @@
   let pending = $state<Settings>(structuredClone($state.snapshot(settingsStore.current)));
   let saving = $state(false);
   let saveError = $state("");
-  let saveStatus = $state("");
+  let savedFlash = $state(false);
 
   onMount(() => {
     if (!settingsStore.loaded) {
@@ -66,14 +66,13 @@
     if (!dirty || saving) return;
     saving = true;
     saveError = "";
-    saveStatus = "saving";
+    savedFlash = false;
     try {
       const result = await settingsStore.save($state.snapshot(pending));
       pending = structuredClone(result);
-      saveStatus = "saved";
+      savedFlash = true;
     } catch (error) {
       saveError = errMsg(error);
-      saveStatus = "";
     } finally {
       saving = false;
     }
@@ -81,7 +80,7 @@
 
   function resetAll() {
     pending = structuredClone($state.snapshot(settingsStore.current));
-    saveStatus = "";
+    savedFlash = false;
     saveError = "";
   }
 
@@ -95,8 +94,21 @@
 
   let showSaveBar = $derived(activeSection !== "account" && activeSection !== "about");
 
-  // dirty takes precedence so "saved" doesn't linger after the user edits again.
-  let statusText = $derived(saveError || (dirty ? "unsaved changes" : saveStatus));
+  // Priority: error > in-flight save > pending edits > recent success.
+  let statusText = $derived.by(() => {
+    if (saveError) return saveError;
+    if (saving) return "saving";
+    if (dirty) return "unsaved changes";
+    if (savedFlash) return "saved";
+    return "";
+  });
+
+  let statusColor = $derived.by(() => {
+    if (saveError) return "text-room-fav";
+    if (saving) return "text-room-text-mid";
+    if (savedFlash && !dirty) return "text-room-accent";
+    return "text-room-text-low";
+  });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -182,15 +194,7 @@
 
         {#if showSaveBar}
           <div class="flex items-center justify-between gap-2 border-t border-room-line px-5 py-3">
-            <span
-              class="min-w-0 truncate font-mono text-[10.5px] {saveError
-                ? 'text-room-fav'
-                : saveStatus === 'saving'
-                  ? 'text-room-text-mid'
-                  : saveStatus === 'saved' && !dirty
-                    ? 'text-room-accent'
-                    : 'text-room-text-low'}"
-            >
+            <span class="min-w-0 truncate font-mono text-[10.5px] {statusColor}">
               {statusText}
             </span>
             <div class="flex items-center gap-2">

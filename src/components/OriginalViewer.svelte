@@ -288,6 +288,41 @@
   }
 </script>
 
+{#snippet videoPlayerSlot(src: string)}
+  <VideoPlayer
+    {src}
+    autoplay={settingsStore.current.playback.autoplay}
+    {appVideoFullscreen}
+    {videoUi}
+    showControls={showVideoControls}
+    showMenu={showVideoMenu}
+    bind:videoElement
+    bind:frameElement={videoFrameElement}
+    onTimeUpdate={saveVideoPlayback}
+    onPause={saveVideoPlayback}
+    onPlay={(target) => {
+      saveVideoPlayback(target);
+      revealVideoControls();
+    }}
+    onVolumeChange={syncVideoUi}
+    onLoadedMetadata={(target) => {
+      applyRememberedAudio(target);
+      syncVideoUi(target);
+      restoreVideoPlayback(target);
+    }}
+    onReveal={revealVideoControls}
+    onHide={hideVideoControls}
+    onTogglePlayback={toggleVideoPlayback}
+    onSeek={seekVideo}
+    onToggleMute={toggleVideoMute}
+    onSetVolume={setVideoVolume}
+    onToggleFullscreen={toggleVideoFullscreen}
+    onToggleMenu={toggleVideoMenu}
+    onSetRate={setVideoRate}
+    onCopyUrl={copyVideoUrl}
+  />
+{/snippet}
+
 {#if imageOnly}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -301,38 +336,7 @@
         {viewer.error}
       </div>
     {:else if viewer.dataUrl && isVideoPost(viewer.post)}
-      <VideoPlayer
-        src={viewer.dataUrl}
-        autoplay={settingsStore.current.playback.autoplay}
-        {appVideoFullscreen}
-        {videoUi}
-        showControls={showVideoControls}
-        showMenu={showVideoMenu}
-        bind:videoElement
-        bind:frameElement={videoFrameElement}
-        onTimeUpdate={saveVideoPlayback}
-        onPause={saveVideoPlayback}
-        onPlay={(target) => {
-          saveVideoPlayback(target);
-          revealVideoControls();
-        }}
-        onVolumeChange={syncVideoUi}
-        onLoadedMetadata={(target) => {
-          applyRememberedAudio(target);
-          syncVideoUi(target);
-          restoreVideoPlayback(target);
-        }}
-        onReveal={revealVideoControls}
-        onHide={hideVideoControls}
-        onTogglePlayback={toggleVideoPlayback}
-        onSeek={seekVideo}
-        onToggleMute={toggleVideoMute}
-        onSetVolume={setVideoVolume}
-        onToggleFullscreen={toggleVideoFullscreen}
-        onToggleMenu={toggleVideoMenu}
-        onSetRate={setVideoRate}
-        onCopyUrl={copyVideoUrl}
-      />
+      {@render videoPlayerSlot(viewer.dataUrl)}
     {:else if viewer.dataUrl}
       <img
         class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain"
@@ -386,38 +390,7 @@
               {viewer.error}
             </div>
           {:else if viewer.dataUrl && isVideoPost(viewer.post)}
-            <VideoPlayer
-              src={viewer.dataUrl}
-              autoplay={settingsStore.current.playback.autoplay}
-              {appVideoFullscreen}
-              {videoUi}
-              showControls={showVideoControls}
-              showMenu={showVideoMenu}
-              bind:videoElement
-              bind:frameElement={videoFrameElement}
-              onTimeUpdate={saveVideoPlayback}
-              onPause={saveVideoPlayback}
-              onPlay={(target) => {
-                saveVideoPlayback(target);
-                revealVideoControls();
-              }}
-              onVolumeChange={syncVideoUi}
-              onLoadedMetadata={(target) => {
-                applyRememberedAudio(target);
-                syncVideoUi(target);
-                restoreVideoPlayback(target);
-              }}
-              onReveal={revealVideoControls}
-              onHide={hideVideoControls}
-              onTogglePlayback={toggleVideoPlayback}
-              onSeek={seekVideo}
-              onToggleMute={toggleVideoMute}
-              onSetVolume={setVideoVolume}
-              onToggleFullscreen={toggleVideoFullscreen}
-              onToggleMenu={toggleVideoMenu}
-              onSetRate={setVideoRate}
-              onCopyUrl={copyVideoUrl}
-            />
+            {@render videoPlayerSlot(viewer.dataUrl)}
           {:else if viewer.dataUrl}
             <button
               type="button"
