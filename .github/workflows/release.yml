@@ -25,7 +25,7 @@ jobs:
             bundles: nsis
           - name: macOS DMG
             platform: macos-latest
-            bundles: dmg
+            bundles: app,dmg
           - name: Linux AppImage
             platform: ubuntu-latest
             bundles: appimage
