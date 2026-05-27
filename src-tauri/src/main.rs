@@ -3,6 +3,7 @@
 mod credentials;
 mod e621;
 mod settings;
+mod vpn;
 
 use std::fs;
 use std::path::PathBuf;
@@ -79,6 +80,7 @@ fn report(operation: &'static str, fallback: &'static str, err: anyhow::Error) -
 struct AppState {
     client: Mutex<Option<Client>>,
     settings: RwLock<Settings>,
+    vpn: Mutex<Option<vpn::VpnHandle>>,
 }
 
 impl AppState {
@@ -86,8 +88,17 @@ impl AppState {
         Self {
             client: Mutex::new(None),
             settings: RwLock::new(settings),
+            vpn: Mutex::new(None),
         }
     }
+}
+
+#[derive(Serialize)]
+struct VpnStatus {
+    configured: bool,
+    enabled: bool,
+    endpoint: Option<String>,
+    proxy_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -307,17 +318,120 @@ fn set_window_fullscreen(window: tauri::Window, fullscreen: bool) -> Result<(), 
     })
 }
 
+#[tauri::command]
+async fn import_vpn_config(
+    path: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<VpnStatus, String> {
+    let content = fs::read_to_string(&path)
+        .map_err(|err| format!("could not read VPN config file: {err}"))?;
+    let cfg = vpn::parse(&content).map_err(|err| report_chain("vpn_parse", err))?;
+    vpn::storage::save(&cfg).map_err(|err| report_chain("vpn_save", err))?;
+    read_status(&state).await
+}
+
+#[tauri::command]
+async fn enable_vpn(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<VpnStatus, String> {
+    let cfg = vpn::storage::load()
+        .map_err(|err| report_chain("vpn_load", err))?
+        .ok_or_else(|| "import a VPN config first".to_string())?;
+
+    let prev = state.vpn.lock().await.take();
+    if let Some(prev) = prev {
+        prev.shutdown().await;
+    }
+
+    let handle = vpn::VpnHandle::start(cfg)
+        .await
+        .map_err(|err| report_chain("vpn_start", err))?;
+    *state.vpn.lock().await = Some(handle);
+    *state.client.lock().await = None;
+
+    persist_vpn_enabled(&app, &state, true)?;
+    read_status(&state).await
+}
+
+#[tauri::command]
+async fn disable_vpn(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<VpnStatus, String> {
+    let prev = state.vpn.lock().await.take();
+    if let Some(prev) = prev {
+        prev.shutdown().await;
+    }
+    *state.client.lock().await = None;
+    persist_vpn_enabled(&app, &state, false)?;
+    read_status(&state).await
+}
+
+#[tauri::command]
+async fn clear_vpn_config(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<VpnStatus, String> {
+    let prev = state.vpn.lock().await.take();
+    if let Some(prev) = prev {
+        prev.shutdown().await;
+    }
+    *state.client.lock().await = None;
+    vpn::storage::clear().map_err(|err| report_chain("vpn_clear", err))?;
+    persist_vpn_enabled(&app, &state, false)?;
+    read_status(&state).await
+}
+
+#[tauri::command]
+async fn get_vpn_status(state: State<'_, Arc<AppState>>) -> Result<VpnStatus, String> {
+    read_status(&state).await
+}
+
+async fn read_status(state: &State<'_, Arc<AppState>>) -> Result<VpnStatus, String> {
+    let stored = vpn::storage::load().map_err(|err| report_chain("vpn_status", err))?;
+    let enabled = state.settings.read().expect("settings lock").vpn.enabled;
+    let vpn_guard = state.vpn.lock().await;
+    Ok(VpnStatus {
+        configured: stored.is_some(),
+        enabled,
+        endpoint: stored.as_ref().map(|c| c.peer.endpoint.clone()),
+        proxy_url: vpn_guard.as_ref().and_then(|h| h.proxy_url()),
+    })
+}
+
+fn persist_vpn_enabled(
+    app: &tauri::AppHandle,
+    state: &State<'_, Arc<AppState>>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut guard = state.settings.write().expect("settings lock");
+    guard.vpn.enabled = enabled;
+    settings::save(app, &guard).map_err(|err| report_chain("vpn_persist", err))?;
+    Ok(())
+}
+
+fn report_chain(operation: &'static str, err: anyhow::Error) -> String {
+    let chain = format!("{err:#}");
+    tracing::error!(operation, error = %chain, "vpn command failed");
+    chain
+}
+
 async fn get_client(state: &State<'_, Arc<AppState>>) -> Result<Client, String> {
     get_client_inner(state.inner()).await
 }
 
 async fn get_client_inner(state: &Arc<AppState>) -> Result<Client, String> {
+    let proxy_url = {
+        let vpn_guard = state.vpn.lock().await;
+        vpn_guard.as_ref().and_then(|h| h.proxy_url())
+    };
     let mut guard = state.client.lock().await;
     if let Some(client) = guard.as_ref() {
         return Ok(client.clone());
     }
 
-    let client = Client::new()
+    let client = Client::new(proxy_url.as_deref())
         .await
         .map_err(|err| report("client_init", "Could not initialize HTTP client.", err))?;
 
@@ -736,7 +850,31 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let loaded = settings::load(app.handle());
-            app.manage(Arc::new(AppState::new(loaded)));
+            let auto_start = loaded.vpn.enabled;
+            let app_state = Arc::new(AppState::new(loaded));
+            app.manage(app_state.clone());
+            if auto_start {
+                tauri::async_runtime::spawn(async move {
+                    match vpn::storage::load() {
+                        Ok(Some(cfg)) => match vpn::VpnHandle::start(cfg).await {
+                            Ok(handle) => {
+                                *app_state.vpn.lock().await = Some(handle);
+                                *app_state.client.lock().await = None;
+                                tracing::info!("vpn auto-started");
+                            }
+                            Err(err) => {
+                                tracing::warn!(error = %format!("{err:#}"), "vpn auto-start failed");
+                            }
+                        },
+                        Ok(None) => {
+                            tracing::warn!("vpn auto-start skipped: no saved config");
+                        }
+                        Err(err) => {
+                            tracing::warn!(error = %format!("{err:#}"), "vpn auto-start could not load config");
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("clowder-media", |ctx, request, responder| {
@@ -761,7 +899,12 @@ fn main() {
             hide_comment,
             get_settings,
             update_settings,
-            set_window_fullscreen
+            set_window_fullscreen,
+            import_vpn_config,
+            enable_vpn,
+            disable_vpn,
+            clear_vpn_config,
+            get_vpn_status
         ])
         .run(tauri::generate_context!())
         .expect("run tauri app");

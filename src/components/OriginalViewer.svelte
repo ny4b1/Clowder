@@ -93,11 +93,11 @@
         return;
       }
 
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (event.key === "," || event.key === ".") {
         if (!target || !Number.isFinite(target.duration)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
-        const delta = event.key === "ArrowRight" ? 5 : -5;
+        const delta = event.key === "." ? 5 : -5;
         const next = Math.min(
           target.duration,
           Math.max(0, (Number.isFinite(target.currentTime) ? target.currentTime : 0) + delta),

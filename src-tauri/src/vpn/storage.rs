@@ -1,0 +1,40 @@
+use anyhow::{Context, Result, anyhow};
+use keyring::{Entry, Error as KeyringError};
+
+use super::config::WgConfig;
+
+const SERVICE: &str = "com.nyabi.clowder";
+const ACCOUNT: &str = "vpn";
+
+fn entry() -> Result<Entry> {
+    Entry::new(SERVICE, ACCOUNT).context("open VPN keychain entry")
+}
+
+pub fn load() -> Result<Option<WgConfig>> {
+    let entry = entry()?;
+    match entry.get_password() {
+        Ok(payload) => {
+            let cfg: WgConfig =
+                serde_json::from_str(&payload).context("decode stored VPN config")?;
+            Ok(Some(cfg))
+        }
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(err) => Err(anyhow!("read VPN keychain entry: {err}")),
+    }
+}
+
+pub fn save(cfg: &WgConfig) -> Result<()> {
+    let payload = serde_json::to_string(cfg).context("encode VPN config")?;
+    entry()?
+        .set_password(&payload)
+        .map_err(|err| anyhow!("write VPN keychain entry: {err}"))
+}
+
+pub fn clear() -> Result<()> {
+    let entry = entry()?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(KeyringError::NoEntry) => Ok(()),
+        Err(err) => Err(anyhow!("delete VPN keychain entry: {err}")),
+    }
+}

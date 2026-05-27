@@ -11,6 +11,7 @@ pub struct Settings {
     pub downloads: DownloadSettings,
     pub playback: PlaybackSettings,
     pub appearance: AppearanceSettings,
+    pub vpn: VpnSettings,
 }
 
 impl Settings {
@@ -18,6 +19,19 @@ impl Settings {
         self.downloads.normalize();
         self.playback.normalize();
         self.appearance.normalize();
+        self.vpn.normalize();
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VpnSettings {
+    pub enabled: bool,
+}
+
+impl VpnSettings {
+    pub fn normalize(&mut self) {
+
     }
 }
 
@@ -190,6 +204,7 @@ mod tests {
                 motion: MotionPreference::Never,
                 grid_min_tile_px: 220,
             },
+            vpn: VpnSettings { enabled: true },
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
@@ -202,6 +217,13 @@ mod tests {
         assert_eq!(s.downloads, DownloadSettings::default());
         assert_eq!(s.playback, PlaybackSettings::default());
         assert_eq!(s.appearance, AppearanceSettings::default());
+        assert_eq!(s.vpn, VpnSettings::default());
+    }
+
+    #[test]
+    fn vpn_defaults_to_disabled() {
+        let v = VpnSettings::default();
+        assert!(!v.enabled);
     }
 
     #[test]
@@ -273,6 +295,7 @@ mod tests {
                 motion: MotionPreference::Always,
                 grid_min_tile_px: 9999,
             },
+            vpn: VpnSettings::default(),
         };
         s.normalize();
         assert_eq!(s.downloads.directory, None);

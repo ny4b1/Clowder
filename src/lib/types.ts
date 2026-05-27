@@ -114,10 +114,22 @@ export type AppearanceSettings = {
   grid_min_tile_px: number;
 };
 
+export type VpnSettings = {
+  enabled: boolean;
+};
+
+export type VpnStatus = {
+  configured: boolean;
+  enabled: boolean;
+  endpoint: string | null;
+  proxy_url: string | null;
+};
+
 export type Settings = {
   downloads: DownloadSettings;
   playback: PlaybackSettings;
   appearance: AppearanceSettings;
+  vpn: VpnSettings;
 };
 
 export type SettingsSection =
@@ -125,4 +137,5 @@ export type SettingsSection =
   | "downloads"
   | "playback"
   | "appearance"
+  | "vpn"
   | "about";

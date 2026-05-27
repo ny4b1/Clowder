@@ -59,21 +59,26 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(proxy_url: Option<&str>) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
 
-        let http = wreq::Client::builder()
+        let mut builder = wreq::Client::builder()
             .emulation(EMULATION_PROFILE)
             .default_headers(headers)
             .timeout(Duration::from_secs(45))
-            .connect_timeout(Duration::from_secs(15))
-            .build()
-            .context("build wreq client")?;
+            .connect_timeout(Duration::from_secs(15));
 
-        // checked_sub avoids panicking on platforms where Instant::now() is close to its epoch.
+        if let Some(url) = proxy_url {
+            let proxy = wreq::Proxy::all(url)
+                .with_context(|| format!("configure SOCKS5 proxy `{url}`"))?;
+            builder = builder.proxy(proxy);
+        }
+
+        let http = builder.build().context("build wreq client")?;
+
         let initial_limiter = Instant::now()
             .checked_sub(Duration::from_secs(1))
             .unwrap_or_else(Instant::now);

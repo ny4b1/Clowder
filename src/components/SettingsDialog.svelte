@@ -7,6 +7,7 @@
   import AppearanceSection from "./settings/AppearanceSection.svelte";
   import DownloadsSection from "./settings/DownloadsSection.svelte";
   import PlaybackSection from "./settings/PlaybackSection.svelte";
+  import VpnSection from "./settings/VpnSection.svelte";
   import { errMsg } from "../lib/errors";
   import { settingsStore } from "../lib/settings-store.svelte";
   import type { Settings, SettingsSection } from "../lib/types";
@@ -89,10 +90,13 @@
     { id: "downloads", label: "Downloads" },
     { id: "playback", label: "Playback" },
     { id: "appearance", label: "Appearance" },
+    { id: "vpn", label: "VPN" },
     { id: "about", label: "About" },
   ];
 
-  let showSaveBar = $derived(activeSection !== "account" && activeSection !== "about");
+  let showSaveBar = $derived(
+    activeSection !== "account" && activeSection !== "about" && activeSection !== "vpn",
+  );
 
   // Priority: error > in-flight save > pending edits > recent success.
   let statusText = $derived.by(() => {
@@ -187,6 +191,8 @@
             <PlaybackSection bind:playback={pending.playback} {saving} />
           {:else if activeSection === "appearance"}
             <AppearanceSection bind:appearance={pending.appearance} {saving} />
+          {:else if activeSection === "vpn"}
+            <VpnSection />
           {:else}
             <AboutSection />
           {/if}
