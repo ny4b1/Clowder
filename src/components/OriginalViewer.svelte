@@ -82,11 +82,42 @@
         void exitVideoFullscreen(activeVideoElement());
         return;
       }
-      if (event.key !== " " && event.key !== "Spacebar") return;
       if (isTextInput(event.target)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void toggleVideoPlayback(activeVideoElement());
+      const target = activeVideoElement();
+
+      if (event.key === " " || event.key === "Spacebar") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void toggleVideoPlayback(target);
+        return;
+      }
+
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        if (!target || !Number.isFinite(target.duration)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const delta = event.key === "ArrowRight" ? 5 : -5;
+        const next = Math.min(
+          target.duration,
+          Math.max(0, (Number.isFinite(target.currentTime) ? target.currentTime : 0) + delta),
+        );
+        seekVideo(target, String(next));
+        return;
+      }
+
+      if (event.key === "f" || event.key === "F") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const frame = imageOnly ? imageOnlyVideoFrameElement : videoFrameElement;
+        void toggleVideoFullscreen(target, frame);
+        return;
+      }
+
+      if (event.key === "m" || event.key === "M") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        toggleVideoMute(target);
+      }
     };
     window.addEventListener("keydown", onVideoKeydown, { capture: true });
     return () => {

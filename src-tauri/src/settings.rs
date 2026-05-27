@@ -13,6 +13,14 @@ pub struct Settings {
     pub appearance: AppearanceSettings,
 }
 
+impl Settings {
+    pub fn normalize(&mut self) {
+        self.downloads.normalize();
+        self.playback.normalize();
+        self.appearance.normalize();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DownloadSettings {
@@ -25,6 +33,19 @@ impl Default for DownloadSettings {
         Self {
             directory: None,
             filename_template: DEFAULT_FILENAME_TEMPLATE.to_string(),
+        }
+    }
+}
+
+impl DownloadSettings {
+    pub fn normalize(&mut self) {
+        if let Some(dir) = &self.directory
+            && dir.trim().is_empty()
+        {
+            self.directory = None;
+        }
+        if self.filename_template.trim().is_empty() {
+            self.filename_template = DEFAULT_FILENAME_TEMPLATE.to_string();
         }
     }
 }
@@ -53,6 +74,10 @@ impl PlaybackSettings {
     pub fn video_chunk_bytes(&self) -> u64 {
         let mb = self.video_chunk_mb.clamp(1, 64);
         u64::from(mb) * 1024 * 1024
+    }
+
+    pub fn normalize(&mut self) {
+        self.video_chunk_mb = self.video_chunk_mb.clamp(1, 64);
     }
 }
 
@@ -92,6 +117,12 @@ impl Default for AppearanceSettings {
     }
 }
 
+impl AppearanceSettings {
+    pub fn normalize(&mut self) {
+        self.grid_min_tile_px = self.grid_min_tile_px.clamp(120, 320);
+    }
+}
+
 pub fn load(app: &tauri::AppHandle) -> Settings {
     let path = match settings_path(app) {
         Ok(p) => p,
@@ -109,7 +140,10 @@ pub fn load(app: &tauri::AppHandle) -> Settings {
         }
     };
     match serde_json::from_str::<Settings>(&contents) {
-        Ok(s) => s,
+        Ok(mut s) => {
+            s.normalize();
+            s
+        }
         Err(err) => {
             tracing::warn!(error = %err, "could not parse settings file; using defaults");
             Settings::default()
@@ -220,5 +254,40 @@ mod tests {
         assert_eq!(a.theme, Theme::System);
         assert_eq!(a.motion, MotionPreference::System);
         assert_eq!(a.grid_min_tile_px, 176);
+    }
+
+    #[test]
+    fn normalize_clamps_out_of_range_values() {
+        let mut s = Settings {
+            downloads: DownloadSettings {
+                directory: Some("   ".to_string()),
+                filename_template: "   ".to_string(),
+            },
+            playback: PlaybackSettings {
+                autoplay: true,
+                remember_volume: true,
+                video_chunk_mb: 9999,
+            },
+            appearance: AppearanceSettings {
+                theme: Theme::Dark,
+                motion: MotionPreference::Always,
+                grid_min_tile_px: 9999,
+            },
+        };
+        s.normalize();
+        assert_eq!(s.downloads.directory, None);
+        assert_eq!(s.downloads.filename_template, DEFAULT_FILENAME_TEMPLATE);
+        assert_eq!(s.playback.video_chunk_mb, 64);
+        assert_eq!(s.appearance.grid_min_tile_px, 320);
+    }
+
+    #[test]
+    fn normalize_floors_below_minimum() {
+        let mut s = Settings::default();
+        s.playback.video_chunk_mb = 0;
+        s.appearance.grid_min_tile_px = 1;
+        s.normalize();
+        assert_eq!(s.playback.video_chunk_mb, 1);
+        assert_eq!(s.appearance.grid_min_tile_px, 120);
     }
 }

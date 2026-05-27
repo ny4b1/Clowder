@@ -130,7 +130,11 @@ export function sortModeFromQuery(value: string): SortMode {
 }
 
 export function postLabel(post: Post) {
-  return post.tags?.artist?.[0] || "unknown";
+  const artists = post.tags?.artist ?? [];
+  if (artists.length === 0) return "unknown";
+  if (artists.length === 1) return artists[0];
+  if (artists.length === 2) return `${artists[0]} + ${artists[1]}`;
+  return `${artists[0]} (+${artists.length - 1})`;
 }
 
 export function dimsLabel(post: Post) {

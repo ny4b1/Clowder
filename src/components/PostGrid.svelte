@@ -25,6 +25,103 @@
     onOpenOriginal,
     onPreviewError,
   }: Props = $props();
+
+  let cardRefs: (HTMLButtonElement | null)[] = $state([]);
+
+  function rovingTabindex(postId: number, index: number) {
+    if (selectedId === null) return index === 0 ? 0 : -1;
+    return postId === selectedId ? 0 : -1;
+  }
+
+  function focusCard(index: number) {
+    const ref = cardRefs[index];
+    if (ref) ref.focus({ preventScroll: false });
+  }
+
+  function moveBy(delta: number, currentIndex: number) {
+    if (posts.length === 0) return;
+    const next = Math.min(posts.length - 1, Math.max(0, currentIndex + delta));
+    if (next === currentIndex) return;
+    onSelect(posts[next].id);
+    queueMicrotask(() => focusCard(next));
+  }
+
+  function moveVertical(direction: 1 | -1, currentIndex: number) {
+    if (posts.length === 0) return;
+    const currentEl = cardRefs[currentIndex];
+    if (!currentEl) return;
+    const currentRect = currentEl.getBoundingClientRect();
+    const centerX = currentRect.left + currentRect.width / 2;
+    const currentRow = Math.round(currentRect.top);
+
+    let bestIndex = -1;
+    let bestDx = Infinity;
+    let bestDyRow = direction > 0 ? Infinity : -Infinity;
+
+    for (let i = 0; i < cardRefs.length; i++) {
+      const el = cardRefs[i];
+      if (!el || i === currentIndex) continue;
+      const rect = el.getBoundingClientRect();
+      const row = Math.round(rect.top);
+      const isBelow = row > currentRow + 1;
+      const isAbove = row < currentRow - 1;
+      if (direction > 0 && !isBelow) continue;
+      if (direction < 0 && !isAbove) continue;
+
+      const rowQualifies =
+        direction > 0 ? row <= bestDyRow : row >= bestDyRow;
+      const sameRow = row === bestDyRow;
+      const dx = Math.abs(rect.left + rect.width / 2 - centerX);
+      if (rowQualifies && (!sameRow || dx < bestDx)) {
+        bestDyRow = row;
+        bestDx = dx;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex >= 0) {
+      onSelect(posts[bestIndex].id);
+      queueMicrotask(() => focusCard(bestIndex));
+    }
+  }
+
+  function onCardKeydown(event: KeyboardEvent, index: number, post: Post) {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveBy(-1, index);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveBy(1, index);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveVertical(-1, index);
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveVertical(1, index);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (posts.length > 0) {
+        onSelect(posts[0].id);
+        queueMicrotask(() => focusCard(0));
+      }
+    } else if (event.key === "End") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (posts.length > 0) {
+        const last = posts.length - 1;
+        onSelect(posts[last].id);
+        queueMicrotask(() => focusCard(last));
+      }
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      onOpenOriginal(post);
+    }
+  }
 </script>
 
 <div class="order-2 overflow-auto p-3" data-grid-scroll>
@@ -61,16 +158,21 @@
     <div
       class="grid gap-2"
       style="grid-template-columns: repeat(auto-fill, minmax(var(--clowder-tile-min, 176px), 1fr));"
+      role="grid"
     >
-      {#each posts as post (post.id)}
+      {#each posts as post, index (post.id)}
         {@const isSelected = selectedId === post.id}
         <button
+          bind:this={cardRefs[index]}
           class="group flex min-h-0 flex-col overflow-hidden rounded-[3px] border bg-room-panel text-left transition-colors duration-150 {isSelected
             ? 'border-room-accent bg-room-panel-hi'
             : 'border-room-line hover:border-room-line-strong'}"
           type="button"
+          role="gridcell"
+          tabindex={rovingTabindex(post.id, index)}
           onclick={() => onSelect(post.id)}
           ondblclick={() => onOpenOriginal(post)}
+          onkeydown={(event) => onCardKeydown(event, index, post)}
         >
           <div class="relative aspect-square min-h-0 overflow-hidden bg-room-floor">
             {#if previews[post.id]}

@@ -1,3 +1,5 @@
+use std::io::Write;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -19,6 +21,9 @@ const MAX_LIMIT: u32 = 320;
 const MIN_LIMIT: u32 = 8;
 const CREDENTIAL_DOMAINS: &[&str] = &["e621.net", "e926.net"];
 const EMULATION_PROFILE: Emulation = Emulation::Chrome136;
+
+pub const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+pub const MAX_MEDIA_RESPONSE_BYTES: u64 = 256 * 1024 * 1024;
 
 fn host_accepts_credentials(host: &str) -> bool {
     CREDENTIAL_DOMAINS
@@ -260,8 +265,50 @@ impl Client {
         ))
     }
 
-    pub async fn download_bytes(&self, url: &str) -> Result<Vec<u8>> {
-        Ok(self.download_media(url, None).await?.bytes)
+    pub async fn download_to_file(&self, url: &str, dest: &Path, max_bytes: u64) -> Result<u64> {
+        let parsed = url::Url::parse(url).context("parse media URL")?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| anyhow!("media URL has no host"))?
+            .to_string();
+
+        let mut req = self.http.get(parsed.as_str());
+        if host_accepts_credentials(&host)
+            && let Some(creds) = self.auth()
+        {
+            req = req.basic_auth(&creds.username, Some(&creds.api_key));
+        }
+
+        let mut resp = req.send().await.context("send download request")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("download failed: HTTP {status}"));
+        }
+
+        if let Some(length) = parse_content_length(resp.headers())
+            && length > max_bytes
+        {
+            return Err(anyhow!(
+                "file is too large to download ({length} bytes > {max_bytes})"
+            ));
+        }
+
+        let mut file = std::fs::File::create(dest)
+            .with_context(|| format!("create download file at {}", dest.display()))?;
+        let mut total: u64 = 0;
+        while let Some(chunk) = resp.chunk().await.context("read download chunk")? {
+            total = total.saturating_add(chunk.len() as u64);
+            if total > max_bytes {
+                drop(file);
+                let _ = std::fs::remove_file(dest);
+                return Err(anyhow!(
+                    "file exceeds download cap of {max_bytes} bytes; aborted"
+                ));
+            }
+            file.write_all(&chunk).context("write download chunk")?;
+        }
+        file.flush().context("flush download file")?;
+        Ok(total)
     }
 
     pub async fn download_media(&self, url: &str, range: Option<&str>) -> Result<MediaResponse> {
@@ -281,13 +328,28 @@ impl Client {
             req = req.basic_auth(&creds.username, Some(&creds.api_key));
         }
 
-        let resp = req.send().await.context("send media request")?;
+        let mut resp = req.send().await.context("send media request")?;
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 206 {
             return Err(anyhow!("media download failed: HTTP {status}"));
         }
         let headers = resp.headers().clone();
-        let bytes = resp.bytes().await.context("read media response")?.to_vec();
+        if let Some(length) = parse_content_length(&headers)
+            && length > MAX_MEDIA_RESPONSE_BYTES
+        {
+            return Err(anyhow!(
+                "media response is too large ({length} bytes > {MAX_MEDIA_RESPONSE_BYTES})"
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = resp.chunk().await.context("read media chunk")? {
+            if bytes.len() as u64 + chunk.len() as u64 > MAX_MEDIA_RESPONSE_BYTES {
+                return Err(anyhow!(
+                    "media response exceeds cap of {MAX_MEDIA_RESPONSE_BYTES} bytes"
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
         Ok(MediaResponse {
             status: status.as_u16(),
             content_type: header_string(&headers, CONTENT_TYPE),
@@ -326,16 +388,16 @@ impl Client {
 
         self.wait_for_api_slot().await;
 
-        let mut query = vec![("post[tag_string_diff]", tag_string_diff.to_string())];
+        let mut form = vec![("post[tag_string_diff]", tag_string_diff.to_string())];
         let edit_reason = edit_reason.trim();
         if !edit_reason.is_empty() {
-            query.push(("post[edit_reason]", edit_reason.to_string()));
+            form.push(("post[edit_reason]", edit_reason.to_string()));
         }
 
         let resp = self
             .http
             .patch(format!("https://{HOST}/posts/{post_id}.json"))
-            .query(&query)
+            .form(&form)
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
             .await
@@ -408,7 +470,7 @@ impl Client {
         let resp = self
             .http
             .post(format!("https://{HOST}/comments.json"))
-            .query(&[
+            .form(&[
                 ("comment[post_id]", post_id.to_string()),
                 ("comment[body]", body.to_string()),
             ])
@@ -483,6 +545,13 @@ fn header_string(headers: &HeaderMap, name: HeaderName) -> Option<String> {
         .get(name)
         .and_then(|value| value.to_str().ok())
         .map(ToString::to_string)
+}
+
+fn parse_content_length(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
 }
 
 fn is_cloudflare_challenge(body: &str) -> bool {

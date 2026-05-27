@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { settingsStore } from "../lib/settings-store.svelte";
   import { FILENAME_TOKENS, applyFilenameTemplate } from "../lib/template";
   import type {
@@ -358,6 +359,7 @@
                 >
                   <span
                     class="min-w-0 flex-1 truncate px-3 py-2 font-mono text-[11.5px] text-room-text"
+                    title={pending.downloads.directory ?? "~/Downloads/Clowder (default)"}
                   >
                     {pending.downloads.directory ?? "~/Downloads/Clowder (default)"}
                   </span>
@@ -592,9 +594,28 @@
                 <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
                   source
                 </div>
-                <div class="mt-1 font-mono text-[12px] text-room-text-mid">
+                <button
+                  type="button"
+                  onclick={() => {
+                    void openUrl("https://github.com/nyattic/Clowder").catch(() => {});
+                  }}
+                  class="mt-1 inline-flex items-center gap-1.5 font-mono text-[12px] text-room-text-mid transition-colors duration-150 hover:text-room-accent"
+                >
                   github.com/nyattic/Clowder
-                </div>
+                  <svg
+                    class="size-3"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M7 17 17 7" />
+                    <path d="M7 7h10v10" />
+                  </svg>
+                </button>
               </div>
               <div>
                 <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">

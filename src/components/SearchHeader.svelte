@@ -9,6 +9,7 @@
     looksLikeMetatag,
     tagAutocompleteTarget,
   } from "../lib/search";
+  import { searchHistoryStore } from "../lib/search-history-store.svelte";
 
   type Props = {
     query: string;
@@ -44,10 +45,16 @@
   let showSuggestions = $state(false);
   let activeSuggestion = $state(0);
   let autocompleteTimer: number | undefined;
+  let autocompleteRequestId = 0;
+  let historyIndex = $state(-1);
+  let historyDraft = $state<string | null>(null);
 
   function updateQuery(value: string) {
     onQueryChange(value);
+    historyIndex = -1;
+    historyDraft = null;
     window.clearTimeout(autocompleteTimer);
+    autocompleteRequestId += 1;
     const token = currentToken(value);
     const metatagSuggestions = localMetatagSuggestions(token.raw);
     if (metatagSuggestions.length > 0) {
@@ -68,14 +75,21 @@
       return;
     }
 
+    const requestId = autocompleteRequestId;
     autocompleteTimer = window.setTimeout(() => {
-      void loadSuggestions(target.term, target.category, target.insertPrefix);
+      void loadSuggestions(target.term, target.category, target.insertPrefix, requestId);
     }, 160);
   }
 
-  async function loadSuggestions(term: string, category: number | null, insertPrefix: string) {
+  async function loadSuggestions(
+    term: string,
+    category: number | null,
+    insertPrefix: string,
+    requestId: number,
+  ) {
     try {
       const result = await fetchTagSuggestions(term, category);
+      if (requestId !== autocompleteRequestId) return;
       suggestions = result.map((suggestion) => ({
         ...suggestion,
         insert: `${insertPrefix}${suggestion.name}`,
@@ -83,25 +97,52 @@
       activeSuggestion = 0;
       showSuggestions = result.length > 0;
     } catch {
+      if (requestId !== autocompleteRequestId) return;
       suggestions = [];
       showSuggestions = false;
     }
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (!showSuggestions || suggestions.length === 0) return;
+    if (showSuggestions && suggestions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        activeSuggestion = (activeSuggestion + 1) % suggestions.length;
+        return;
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        activeSuggestion = (activeSuggestion - 1 + suggestions.length) % suggestions.length;
+        return;
+      } else if (event.key === "Tab" || event.key === "Enter") {
+        event.preventDefault();
+        applySuggestion(suggestions[activeSuggestion]);
+        return;
+      } else if (event.key === "Escape") {
+        showSuggestions = false;
+        return;
+      }
+    }
 
-    if (event.key === "ArrowDown") {
+    if (event.key === "ArrowUp") {
+      const history = searchHistoryStore.items;
+      if (history.length === 0) return;
       event.preventDefault();
-      activeSuggestion = (activeSuggestion + 1) % suggestions.length;
-    } else if (event.key === "ArrowUp") {
+      if (historyIndex === -1) historyDraft = query;
+      const nextIndex = Math.min(history.length - 1, historyIndex + 1);
+      historyIndex = nextIndex;
+      onQueryChange(history[nextIndex]);
+    } else if (event.key === "ArrowDown") {
+      if (historyIndex === -1) return;
       event.preventDefault();
-      activeSuggestion = (activeSuggestion - 1 + suggestions.length) % suggestions.length;
-    } else if (event.key === "Tab" || event.key === "Enter") {
-      event.preventDefault();
-      applySuggestion(suggestions[activeSuggestion]);
-    } else if (event.key === "Escape") {
-      showSuggestions = false;
+      const history = searchHistoryStore.items;
+      if (historyIndex === 0) {
+        historyIndex = -1;
+        onQueryChange(historyDraft ?? "");
+        historyDraft = null;
+      } else {
+        historyIndex -= 1;
+        onQueryChange(history[historyIndex]);
+      }
     }
   }
 

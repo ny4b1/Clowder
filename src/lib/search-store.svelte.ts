@@ -1,5 +1,6 @@
 import { mediaUrl, searchPosts, thumbnailUrl } from "./e621";
 import { queryWithSort, sortModeFromQuery } from "./search";
+import { toastStore } from "./toast-store.svelte";
 import type { Post, Preset, SortMode } from "./types";
 
 const basePresets: Preset[] = [
@@ -108,7 +109,9 @@ class SearchStore {
         void this.loadPreview(post);
       }
     } catch (error) {
-      this.status = `error: ${String(error)}`;
+      const message = `search failed: ${String(error)}`;
+      this.status = message;
+      toastStore.error(message);
     } finally {
       this.loading = false;
     }

@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend build
+    name: Frontend build & test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -20,6 +20,7 @@ jobs:
           node-version: '24'
           cache: 'npm'
       - run: npm ci
+      - run: npm run test
       - run: npm run build
 
   rust:
@@ -72,9 +73,8 @@ jobs:
           node-version: '24'
           cache: 'npm'
       - run: npm ci
-      - name: npm audit (advisory)
+      - name: npm audit (high+)
         run: npm audit --audit-level=high
-        continue-on-error: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -84,4 +84,3 @@ jobs:
       - name: cargo audit
         working-directory: src-tauri
         run: cargo audit
-        continue-on-error: true

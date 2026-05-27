@@ -5,12 +5,15 @@
   import PostSidebar from "./components/PostSidebar.svelte";
   import SearchHeader from "./components/SearchHeader.svelte";
   import SettingsDialog from "./components/SettingsDialog.svelte";
+  import Toasts from "./components/Toasts.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import { accountStore } from "./lib/account-store.svelte";
   import { downloadStore } from "./lib/download-store.svelte";
   import { postActionsStore } from "./lib/post-actions-store.svelte";
+  import { searchHistoryStore } from "./lib/search-history-store.svelte";
   import { searchStore } from "./lib/search-store.svelte";
   import { settingsStore } from "./lib/settings-store.svelte";
+  import { toastStore } from "./lib/toast-store.svelte";
   import { viewerStore } from "./lib/viewer-store.svelte";
   import type { Post, Preset, SettingsSection, SortMode } from "./lib/types";
 
@@ -50,6 +53,9 @@
   }
 
   function search(targetPage: number = 1) {
+    if (targetPage === 1) {
+      searchHistoryStore.push(searchStore.query);
+    }
     return searchStore.search(targetPage, computePageSize());
   }
 
@@ -205,7 +211,9 @@
     }
     const error = await postActionsStore.toggleFavorite(post);
     if (error) {
-      searchStore.status = `favorite failed: ${error}`;
+      const message = `favorite failed: ${error}`;
+      searchStore.status = message;
+      toastStore.error(message);
     }
   }
 
@@ -345,6 +353,8 @@
       onHideComment={hideOwnComment}
     />
   {/if}
+
+  <Toasts />
 
   {#if showSettings}
     <SettingsDialog

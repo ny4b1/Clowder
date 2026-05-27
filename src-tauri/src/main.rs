@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use e621::{Client, Comment, Credentials, Post, Tag};
+use e621::{Client, Comment, Credentials, MAX_DOWNLOAD_BYTES, Post, Tag};
 use serde::Serialize;
 use settings::Settings;
 use tauri::http::{
@@ -149,10 +149,6 @@ async fn download_file(
 ) -> Result<String, String> {
     let parsed = validate_remote_url(&url)?;
     let client = get_client(&state).await?;
-    let bytes = client
-        .download_bytes(parsed.as_str())
-        .await
-        .map_err(|err| report("download_file", "Download failed.", err))?;
     let custom_dir = state
         .settings
         .read()
@@ -162,11 +158,10 @@ async fn download_file(
         .clone();
     let path = unique_download_path(&filename, custom_dir.as_deref())
         .map_err(|err| report("download_file_path", "Could not allocate a file name.", err))?;
-    fs::write(&path, bytes).map_err(|err| {
-        let chain = format!("{err:#}");
-        tracing::error!(operation = "download_file_write", error = %chain);
-        "Could not save the file.".to_string()
-    })?;
+    client
+        .download_to_file(parsed.as_str(), &path, MAX_DOWNLOAD_BYTES)
+        .await
+        .map_err(|err| report("download_file", "Download failed.", err))?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -295,6 +290,8 @@ async fn update_settings(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Settings, String> {
+    let mut new_settings = new_settings;
+    new_settings.normalize();
     settings::save(&app, &new_settings)
         .map_err(|err| report("settings_save", "Failed to save settings.", err))?;
     *state.settings.write().expect("settings lock") = new_settings.clone();
@@ -735,6 +732,7 @@ fn main() {
     init_tracing();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let loaded = settings::load(app.handle());
             app.manage(Arc::new(AppState::new(loaded)));

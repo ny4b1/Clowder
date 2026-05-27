@@ -36,7 +36,7 @@
   function commentDate(value: string | null | undefined) {
     if (!value) return "";
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
+    if (Number.isNaN(date.getTime())) return "";
     return date.toLocaleString(undefined, {
       year: "numeric",
       month: "short",
@@ -51,7 +51,7 @@
   }
 
   function canHideComment(commentCreator: string | null | undefined) {
-    return !!username && commentCreator?.toLowerCase() === username.toLowerCase();
+    return !!username && commentCreator === username;
   }
 </script>
 
