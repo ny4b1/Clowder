@@ -26,10 +26,7 @@ impl PacketQueues {
     }
 
     pub fn drain_outbound(&self) -> Vec<Vec<u8>> {
-        let mut q = self
-            .outbound
-            .lock()
-            .expect("vpn outbound queue poisoned");
+        let mut q = self.outbound.lock().expect("vpn outbound queue poisoned");
         q.drain(..).collect()
     }
 }

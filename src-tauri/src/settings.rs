@@ -30,9 +30,7 @@ pub struct VpnSettings {
 }
 
 impl VpnSettings {
-    pub fn normalize(&mut self) {
-
-    }
+    pub fn normalize(&mut self) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

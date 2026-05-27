@@ -216,9 +216,7 @@ fn section_header(line: &str) -> Option<&str> {
 }
 
 fn strip_comment(line: &str) -> &str {
-    let comment_pos = line
-        .find(['#', ';'])
-        .unwrap_or(line.len());
+    let comment_pos = line.find(['#', ';']).unwrap_or(line.len());
     &line[..comment_pos]
 }
 
@@ -257,9 +255,7 @@ fn apply_interface(
             }
             builder.mtu = Some(mtu);
         }
-        "table" | "preup" | "postup" | "predown" | "postdown" | "saveconfig" | "fwmark" => {
-
-        }
+        "table" | "preup" | "postup" | "predown" | "postdown" | "saveconfig" | "fwmark" => {}
         other => bail!("unknown [Interface] key `{other}` at line {line_no}"),
     }
     Ok(())
@@ -318,7 +314,6 @@ fn validate_wg_key(key: &str) -> Result<()> {
 }
 
 fn validate_endpoint(endpoint: &str) -> Result<()> {
-
     let (host, port_str) = if let Some(rest) = endpoint.strip_prefix('[') {
         let (host, tail) = rest
             .split_once(']')
@@ -368,7 +363,6 @@ Endpoint = jp-tyo-wg-001.mullvad.net:51820
     }
 
     fn proton_conf() -> String {
-
         format!(
             "\
 [Interface]
@@ -436,7 +430,6 @@ PersistentKeepalive = 25
 
     #[test]
     fn rejects_wrong_length_key() {
-
         let conf = format!(
             "[Interface]\nPrivateKey = dGVzdA==\nAddress = 10.0.0.1/32\n\n[Peer]\nPublicKey = {KEY_B}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 1.2.3.4:51820\n"
         );

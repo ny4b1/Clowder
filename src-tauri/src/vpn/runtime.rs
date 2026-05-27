@@ -59,7 +59,6 @@ pub struct TcpSession {
     pub inbound: mpsc::Receiver<Vec<u8>>,
 }
 
-
 pub struct EngineHandle {
     cmd_tx: mpsc::Sender<EngineCmd>,
     shutdown: Option<oneshot::Sender<()>>,
@@ -124,7 +123,8 @@ struct PreparedConfig {
 
 impl PreparedConfig {
     fn from_wg(cfg: &WgConfig) -> Result<Self> {
-        let static_secret = StaticSecret::from(decode_key(&cfg.interface.private_key, "PrivateKey")?);
+        let static_secret =
+            StaticSecret::from(decode_key(&cfg.interface.private_key, "PrivateKey")?);
         let peer_public = PublicKey::from(decode_key(&cfg.peer.public_key, "PublicKey")?);
         let preshared_key = match cfg.peer.preshared_key.as_deref() {
             Some(s) => Some(decode_key(s, "PresharedKey")?),
@@ -188,6 +188,9 @@ struct ManagedSocket {
     half_close_requested: bool,
 }
 
+type DnsReplySender = oneshot::Sender<Result<Vec<IpAddr>>>;
+type PendingDns = HashMap<u16, (DnsReplySender, StdInstant)>;
+
 async fn run_engine(
     cfg: PreparedConfig,
     mut cmd_rx: mpsc::Receiver<EngineCmd>,
@@ -249,8 +252,7 @@ async fn run_engine(
         .bind(DNS_LOCAL_PORT)
         .map_err(|err| anyhow!("bind DNS UDP socket on {DNS_LOCAL_PORT}: {err:?}"))?;
     let dns_handle = sockets.add(dns_socket);
-    let mut pending_dns: HashMap<u16, (oneshot::Sender<Result<Vec<IpAddr>>>, StdInstant)> =
-        HashMap::new();
+    let mut pending_dns: PendingDns = HashMap::new();
     let mut dns_id_counter: u16 = 1;
     let dns_server = cfg.dns_servers[0];
 
@@ -397,7 +399,7 @@ fn open_tcp_session(
 
 fn allocate_port(next_port: &mut u16) -> u16 {
     let port = *next_port;
-    *next_port = if *next_port >= EPHEMERAL_PORT_END {
+    *next_port = if *next_port == EPHEMERAL_PORT_END {
         EPHEMERAL_PORT_BASE
     } else {
         *next_port + 1
@@ -569,9 +571,9 @@ fn send_dns_query(
     dns_handle: SocketHandle,
     dns_server: IpAddr,
     dns_id_counter: &mut u16,
-    pending: &mut HashMap<u16, (oneshot::Sender<Result<Vec<IpAddr>>>, StdInstant)>,
+    pending: &mut PendingDns,
     domain: String,
-    reply: oneshot::Sender<Result<Vec<IpAddr>>>,
+    reply: DnsReplySender,
 ) {
     let id = next_dns_id(dns_id_counter);
     let query = match dns::build_query(id, &domain, dns::TYPE_A) {
@@ -605,7 +607,7 @@ fn next_dns_id(counter: &mut u16) -> u16 {
 fn drain_dns_responses(
     sockets: &mut SocketSet<'static>,
     dns_handle: SocketHandle,
-    pending: &mut HashMap<u16, (oneshot::Sender<Result<Vec<IpAddr>>>, StdInstant)>,
+    pending: &mut PendingDns,
 ) {
     loop {
         let sock = sockets.get_mut::<udp::Socket>(dns_handle);
@@ -624,9 +626,7 @@ fn drain_dns_responses(
     }
 }
 
-fn expire_dns(
-    pending: &mut HashMap<u16, (oneshot::Sender<Result<Vec<IpAddr>>>, StdInstant)>,
-) {
+fn expire_dns(pending: &mut PendingDns) {
     let now = StdInstant::now();
     let expired: Vec<u16> = pending
         .iter()

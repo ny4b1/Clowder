@@ -72,8 +72,8 @@ impl Client {
             .connect_timeout(Duration::from_secs(15));
 
         if let Some(url) = proxy_url {
-            let proxy = wreq::Proxy::all(url)
-                .with_context(|| format!("configure SOCKS5 proxy `{url}`"))?;
+            let proxy =
+                wreq::Proxy::all(url).with_context(|| format!("configure SOCKS5 proxy `{url}`"))?;
             builder = builder.proxy(proxy);
         }
 
