@@ -208,8 +208,7 @@ async fn run_engine(
         cfg.persistent_keepalive,
         0,
         None,
-    )
-    .map_err(|s| anyhow!("boringtun Tunn::new failed: {s}"))?;
+    );
 
     let queues = PacketQueues::new();
     let mut device = VirtualDevice::new(queues.clone(), cfg.mtu);
