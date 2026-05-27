@@ -16,6 +16,8 @@ account credentials stay in your computer's secure password store.
 - Full-resolution viewer for images, GIFs, and videos
 - Sign in with your e621 account to favorite, comment, and edit tags
 - One-click downloads with a customizable filename
+- Per-app WireGuard VPN to bypass regional blocks — only Clowder's
+  traffic is tunneled, no system-wide changes, no admin required
 - Keyboard shortcuts throughout
 - Light and dark themes
 
@@ -28,7 +30,22 @@ Download the latest build for your platform from the
 - **macOS** — `.dmg`
 - **Linux** — `.AppImage` *(built but not actively tested — bug reports welcome)*
 
-If e621 is blocked in your country, turn on a VPN before launching.
+## Bypassing regional blocks (optional)
+
+If e621 is blocked in your country, Clowder can route **its own traffic
+only** through a WireGuard peer — the rest of your system keeps using
+your normal connection.
+
+1. Export a WireGuard config (`.conf`) from your VPN provider.
+   Mullvad and Proton both work; pick a server in a country where e621
+   is reachable.
+2. Open **Settings → VPN → Import WireGuard config** and pick the file.
+3. Hit **Connect**. The tunnel auto-starts on subsequent launches.
+
+The private key is stored in your OS keychain (Keychain on macOS,
+Credential Manager on Windows, Secret Service on Linux). DNS is
+resolved inside the tunnel to prevent leaks. Note that hostnames are
+resolved over IPv4 (A records) only.
 
 ## Usage
 
@@ -70,7 +87,7 @@ Auto-updates require a one-time setup:
 
 After that, cutting a release is just:
 ```sh
-git tag v0.3.1 && git push --tags
+git tag v0.4.0 && git push --tags
 ```
 The workflow builds for all three platforms, signs the artifacts,
 publishes a GitHub Release, and writes the `latest.json` that
