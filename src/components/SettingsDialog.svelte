@@ -5,6 +5,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { settingsStore } from "../lib/settings-store.svelte";
   import { FILENAME_TOKENS, applyFilenameTemplate } from "../lib/template";
+  import { updateStore } from "../lib/update-store.svelte";
   import type {
     MotionPreference,
     Settings,
@@ -586,8 +587,45 @@
                 <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
                   version
                 </div>
-                <div class="mt-1 font-mono text-[13px] tabular-nums text-room-text">
-                  {appVersion || "—"}
+                <div class="mt-1 flex items-center gap-3">
+                  <span class="font-mono text-[13px] tabular-nums text-room-text">
+                    {appVersion || "—"}
+                  </span>
+                  <span class="font-mono text-[10.5px] text-room-text-low">
+                    {#if updateStore.status === "checking"}
+                      checking…
+                    {:else if updateStore.status === "available" && updateStore.available}
+                      v{updateStore.available.version} available
+                    {:else if updateStore.status === "downloading"}
+                      downloading…
+                    {:else if updateStore.status === "ready"}
+                      installed — restart to apply
+                    {:else if updateStore.status === "error"}
+                      <span class="text-room-fav">{updateStore.error}</span>
+                    {:else}
+                      up to date
+                    {/if}
+                  </span>
+                </div>
+                <div class="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onclick={() => void updateStore.check()}
+                    disabled={updateStore.status === "checking" ||
+                      updateStore.status === "downloading"}
+                    class="h-7 rounded-[3px] border border-room-line bg-room-panel px-3 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-text-mid transition-colors duration-150 hover:border-room-line-strong hover:text-room-text disabled:opacity-50"
+                  >
+                    check now
+                  </button>
+                  {#if updateStore.status === "available"}
+                    <button
+                      type="button"
+                      onclick={() => void updateStore.install()}
+                      class="h-7 rounded-[3px] border border-room-accent bg-room-accent/10 px-3 font-mono text-[10.5px] uppercase tracking-[0.18em] text-room-accent transition-colors duration-150 hover:bg-room-accent/20"
+                    >
+                      install
+                    </button>
+                  {/if}
                 </div>
               </div>
               <div>

@@ -52,6 +52,34 @@ npm install
 npm run tauri build
 ```
 
+## Releasing (maintainers)
+
+Releases are produced by GitHub Actions when a `v*` tag is pushed.
+Auto-updates require a one-time setup:
+
+1. Generate a signing key pair:
+   ```sh
+   npx tauri signer generate -w ~/.tauri/clowder.key
+   ```
+2. Copy the printed **public key** into
+   `src-tauri/tauri.conf.json` under `plugins.updater.pubkey`.
+3. In **GitHub → Settings → Secrets and variables → Actions**, add:
+   - `TAURI_SIGNING_PRIVATE_KEY` — contents of `~/.tauri/clowder.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the passphrase you chose
+     (or leave blank if you skipped it)
+
+After that, cutting a release is just:
+```sh
+git tag v0.3.1 && git push --tags
+```
+The workflow builds for all three platforms, signs the artifacts,
+publishes a GitHub Release, and writes the `latest.json` that
+existing installs poll for updates.
+
+> Note: Auto-updates work without OS code-signing, but users will
+> still see Gatekeeper / SmartScreen warnings on first install until
+> the build is signed by a recognised certificate authority.
+
 ## License
 
 [GNU GPL v3.0](LICENSE). Not affiliated with or endorsed by e621.

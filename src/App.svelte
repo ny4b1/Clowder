@@ -14,6 +14,7 @@
   import { searchStore } from "./lib/search-store.svelte";
   import { settingsStore } from "./lib/settings-store.svelte";
   import { toastStore } from "./lib/toast-store.svelte";
+  import { updateStore } from "./lib/update-store.svelte";
   import { viewerStore } from "./lib/viewer-store.svelte";
   import type { Post, Preset, SettingsSection, SortMode } from "./lib/types";
 
@@ -62,6 +63,9 @@
   onMount(() => {
     void accountStore.load();
     void settingsStore.load();
+    const updateCheckTimer = window.setTimeout(() => {
+      void updateStore.check(true);
+    }, 3000);
     window.addEventListener("keydown", onWindowKeydown);
     window.addEventListener("popstate", onPopState);
     window.addEventListener("mouseup", onMouseNavButton);
@@ -76,6 +80,7 @@
     motionMq.addEventListener("change", onMotion);
 
     return () => {
+      window.clearTimeout(updateCheckTimer);
       window.removeEventListener("keydown", onWindowKeydown);
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("mouseup", onMouseNavButton);
