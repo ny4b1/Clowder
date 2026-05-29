@@ -22,6 +22,7 @@ class SearchStore {
   sortMode = $state<SortMode>("latest");
   page = $state(1);
   hasNextPage = $state(false);
+  private searchGeneration = 0;
 
   readonly basePresets = basePresets;
 
@@ -82,6 +83,7 @@ class SearchStore {
   }
 
   async search(targetPage: number, limit: number) {
+    const generation = ++this.searchGeneration;
     const trimmed = this.query.trim();
     const hasExplicitOrder = /\border:[a-z_]+/i.test(trimmed);
     if (hasExplicitOrder && !this.activePreset) {
@@ -101,32 +103,43 @@ class SearchStore {
 
     try {
       const result = await searchPosts(tags, this.page, limit);
+      if (generation !== this.searchGeneration) return;
       this.posts = result.posts;
       this.hasNextPage = this.posts.length >= limit;
       this.status = `${this.posts.length} post${this.posts.length === 1 ? "" : "s"}`;
       for (const post of this.posts) {
-        void this.loadPreview(post);
+        void this.loadPreview(post, generation);
       }
     } catch (error) {
+      if (generation !== this.searchGeneration) return;
       const message = `search failed: ${errMsg(error)}`;
       this.status = message;
       toastStore.error(message);
     } finally {
-      this.loading = false;
+      if (generation === this.searchGeneration) {
+        this.loading = false;
+      }
     }
   }
 
-  private async loadPreview(post: Post) {
+  private async loadPreview(post: Post, generation: number) {
+    if (generation !== this.searchGeneration) return;
     const url = thumbnailUrl(post);
     if (!url) {
-      this.markPreviewFailed(post.id);
+      if (generation === this.searchGeneration) {
+        this.markPreviewFailed(post.id);
+      }
       return;
     }
     try {
       const proxied = await mediaUrl(url);
-      this.previews[post.id] = proxied;
+      if (generation === this.searchGeneration) {
+        this.previews[post.id] = proxied;
+      }
     } catch {
-      this.markPreviewFailed(post.id);
+      if (generation === this.searchGeneration) {
+        this.markPreviewFailed(post.id);
+      }
     }
   }
 }

@@ -413,7 +413,13 @@ impl Client {
         }
     }
 
-    pub async fn download_to_file(&self, url: &str, dest: &Path, max_bytes: u64) -> Result<u64> {
+    pub async fn download_to_file(
+        &self,
+        url: &str,
+        dest: &Path,
+        mut file: std::fs::File,
+        max_bytes: u64,
+    ) -> Result<u64> {
         let parsed = url::Url::parse(url).context("parse media URL")?;
         let host = parsed
             .host_str()
@@ -439,8 +445,6 @@ impl Client {
             ));
         }
 
-        let mut file = std::fs::File::create(dest)
-            .with_context(|| format!("create download file at {}", dest.display()))?;
         let mut total: u64 = 0;
         while let Some(chunk) = resp.chunk().await.context("read download chunk")? {
             total = total.saturating_add(chunk.len() as u64);

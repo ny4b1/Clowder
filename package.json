@@ -11,6 +11,7 @@
     "build:mac:app": "tauri build --bundles app",
     "build:mac:dmg": "tauri build --bundles dmg",
     "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "tauri": "tauri"
   },
@@ -26,6 +27,7 @@
     "@sveltejs/vite-plugin-svelte": "7.1.2",
     "@tailwindcss/vite": "4.3.0",
     "@tauri-apps/cli": "2.11.2",
+    "svelte-check": "^4.4.8",
     "svelte": "5.55.9",
     "tailwindcss": "4.3.0",
     "typescript": "6.0.3",

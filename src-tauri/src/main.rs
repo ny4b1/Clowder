@@ -6,6 +6,7 @@ mod settings;
 mod vpn;
 
 use std::fs;
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -167,12 +168,15 @@ async fn download_file(
         .downloads
         .directory
         .clone();
-    let path = unique_download_path(&filename, custom_dir.as_deref())
+    let (path, file) = create_unique_download_file(&filename, custom_dir.as_deref())
         .map_err(|err| report("download_file_path", "Could not allocate a file name.", err))?;
-    client
-        .download_to_file(parsed.as_str(), &path, MAX_DOWNLOAD_BYTES)
+    if let Err(err) = client
+        .download_to_file(parsed.as_str(), &path, file, MAX_DOWNLOAD_BYTES)
         .await
-        .map_err(|err| report("download_file", "Download failed.", err))?;
+    {
+        let _ = fs::remove_file(&path);
+        return Err(report("download_file", "Download failed.", err));
+    }
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -396,7 +400,7 @@ async fn read_status(state: &State<'_, Arc<AppState>>) -> Result<VpnStatus, Stri
         configured: stored.is_some(),
         enabled,
         endpoint: stored.as_ref().map(|c| c.peer.endpoint.clone()),
-        proxy_url: vpn_guard.as_ref().and_then(|h| h.proxy_url()),
+        proxy_url: vpn_guard.as_ref().and_then(|h| h.proxy_display_url()),
     })
 }
 
@@ -473,11 +477,12 @@ async fn fetch_media_response(
         .expect("settings lock")
         .playback
         .video_chunk_bytes();
-    let range = request
+    let requested_range = request
         .headers()
         .get(RANGE)
         .and_then(|value| value.to_str().ok())
         .and_then(|range| media_range(&url, range, max_chunk));
+    let range = requested_range.or_else(|| initial_media_range(&url, max_chunk));
 
     let client = get_client_inner(&state)
         .await
@@ -520,6 +525,13 @@ fn media_range(url: &str, range: &str, max_chunk: u64) -> Option<String> {
         return capped_video_range(range, max_chunk);
     }
     Some(range.trim().to_string())
+}
+
+fn initial_media_range(url: &str, max_chunk: u64) -> Option<String> {
+    if is_video_url(url) {
+        return Some(format!("bytes=0-{}", max_chunk.saturating_sub(1)));
+    }
+    None
 }
 
 fn capped_video_range(range: &str, max_chunk: u64) -> Option<String> {
@@ -567,7 +579,10 @@ fn mime_for_url(url: &str) -> &'static str {
     }
 }
 
-fn unique_download_path(filename: &str, custom_dir: Option<&str>) -> anyhow::Result<PathBuf> {
+fn create_unique_download_file(
+    filename: &str,
+    custom_dir: Option<&str>,
+) -> anyhow::Result<(PathBuf, File)> {
     let downloads = match custom_dir {
         Some(d) if !d.trim().is_empty() => PathBuf::from(d),
         _ => downloads_dir()?,
@@ -576,8 +591,8 @@ fn unique_download_path(filename: &str, custom_dir: Option<&str>) -> anyhow::Res
 
     let safe = sanitize_filename(filename);
     let mut path = downloads.join(&safe);
-    if !path.exists() {
-        return Ok(path);
+    if let Some(file) = create_new_file(&path)? {
+        return Ok((path, file));
     }
 
     let stem = PathBuf::from(&safe)
@@ -596,14 +611,22 @@ fn unique_download_path(filename: &str, custom_dir: Option<&str>) -> anyhow::Res
             None => format!("{stem}-{index}"),
         };
         path = downloads.join(candidate);
-        if !path.exists() {
-            return Ok(path);
+        if let Some(file) = create_new_file(&path)? {
+            return Ok((path, file));
         }
     }
 
     Err(anyhow::anyhow!(
         "could not allocate a unique download filename"
     ))
+}
+
+fn create_new_file(path: &std::path::Path) -> anyhow::Result<Option<File>> {
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(err) => Err(err.into()),
+    }
 }
 
 fn downloads_dir() -> anyhow::Result<PathBuf> {
@@ -733,6 +756,31 @@ mod tests {
     }
 
     #[test]
+    fn create_unique_download_file_uses_create_new() {
+        let root = std::env::temp_dir().join(format!(
+            "clowder-download-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("sample.jpg"), b"existing").unwrap();
+
+        let (path, file) =
+            create_unique_download_file("sample.jpg", Some(root.to_str().unwrap())).unwrap();
+        drop(file);
+
+        assert_eq!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("sample-1.jpg")
+        );
+        assert!(path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn capped_video_range_caps_to_configured_chunk() {
         const MB2: u64 = 2 * 1024 * 1024;
         assert_eq!(
@@ -757,6 +805,16 @@ mod tests {
             capped_video_range("bytes=0-", MB8).as_deref(),
             Some("bytes=0-8388607")
         );
+    }
+
+    #[test]
+    fn initial_media_range_caps_videos_only() {
+        const MB2: u64 = 2 * 1024 * 1024;
+        assert_eq!(
+            initial_media_range("https://x.example/v.webm", MB2).as_deref(),
+            Some("bytes=0-2097151")
+        );
+        assert_eq!(initial_media_range("https://x.example/i.jpg", MB2), None);
     }
 
     #[test]

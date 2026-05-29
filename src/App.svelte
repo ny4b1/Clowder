@@ -36,13 +36,13 @@
       : [...searchStore.basePresets, { label: "Favorites", value: "", requiresAccount: true }],
   );
 
-  // Mirrors PostGrid CSS: p-3 (12px), gap-2 (8px), minmax(176px,1fr), h-16 metadata strip (64px).
+  // Mirrors PostGrid CSS: p-3 (12px), gap-2 (8px), minmax(var(--clowder-tile-min),1fr), h-16 metadata strip (64px).
   function computePageSize(): number {
     const grid = document.querySelector<HTMLElement>("[data-grid-scroll]");
     if (!grid) return 64;
     const padding = 12;
     const gap = 8;
-    const tileMin = 176;
+    const tileMin = settingsStore.current.appearance.grid_min_tile_px;
     const metaH = 64;
     const w = grid.clientWidth - 2 * padding;
     const h = grid.clientHeight - 2 * padding;

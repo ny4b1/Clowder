@@ -26,5 +26,5 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "ansi"] }
 unicode-normalization = "0.1.24"
 url = "2.5"
-wreq = { version = "5.3.0", default-features = false, features = ["webpki-roots", "json", "gzip", "brotli", "charset", "macos-system-configuration", "socks"] }
-wreq-util = "2.2.6"
+wreq = { version = "6.0.0-rc.28", default-features = false, features = ["webpki-roots", "json", "gzip", "brotli", "charset", "query", "form", "socks", "system-proxy"] }
+wreq-util = "3.0.0-rc.11"

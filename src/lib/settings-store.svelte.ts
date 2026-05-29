@@ -18,6 +18,9 @@ const defaults: Settings = {
     motion: "system",
     grid_min_tile_px: 176,
   },
+  vpn: {
+    enabled: false,
+  },
 };
 
 class SettingsStore {

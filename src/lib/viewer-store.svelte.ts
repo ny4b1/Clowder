@@ -16,8 +16,10 @@ class ViewerStore {
   viewer = $state<OriginalViewer | null>(null);
   imageOnly = $state(false);
   comments = $state<CommentState>({ ...emptyComments });
+  private openGeneration = 0;
 
   async open(post: Post, historyMode: "push" | "replace" | "skip" = "push") {
+    const generation = ++this.openGeneration;
     const url = originalUrl(post);
     this.imageOnly = false;
     this.comments = { ...emptyComments, loading: true };
@@ -39,17 +41,18 @@ class ViewerStore {
 
     try {
       const result = await mediaUrl(url);
-      if (this.viewer?.post.id === post.id) {
+      if (generation === this.openGeneration && this.viewer?.post.id === post.id) {
         this.viewer = { ...this.viewer, dataUrl: result, loading: false, error: null };
       }
     } catch (error) {
-      if (this.viewer?.post.id === post.id) {
+      if (generation === this.openGeneration && this.viewer?.post.id === post.id) {
         this.viewer = { ...this.viewer, dataUrl: null, loading: false, error: errMsg(error) };
       }
     }
   }
 
   close(fromHistory = false) {
+    this.openGeneration++;
     this.viewer = null;
     this.imageOnly = false;
     this.comments = { ...emptyComments };

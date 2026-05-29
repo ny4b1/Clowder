@@ -1,6 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use anyhow::{Context, Result, anyhow, bail};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::RngCore;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -8,8 +10,11 @@ use tokio::sync::{mpsc, oneshot};
 use super::runtime::{EngineCmd, TcpSession};
 
 const SOCKS_VERSION: u8 = 0x05;
-const METHOD_NONE: u8 = 0x00;
+const METHOD_USERNAME_PASSWORD: u8 = 0x02;
 const METHOD_NO_ACCEPTABLE: u8 = 0xff;
+const USERPASS_VERSION: u8 = 0x01;
+const USERPASS_STATUS_OK: u8 = 0x00;
+const USERPASS_STATUS_DENIED: u8 = 0x01;
 const CMD_CONNECT: u8 = 0x01;
 const ATYP_IPV4: u8 = 0x01;
 const ATYP_DOMAIN: u8 = 0x03;
@@ -22,13 +27,18 @@ const REP_ADDR_NOT_SUPPORTED: u8 = 0x08;
 
 pub struct SocksHandle {
     pub local_addr: SocketAddr,
+    auth_token: String,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SocksHandle {
     pub fn proxy_url(&self) -> String {
-        format!("socks5://{}", self.local_addr)
+        format!("socks5://clowder:{}@{}", self.auth_token, self.local_addr)
+    }
+
+    pub fn proxy_display_url(&self) -> String {
+        format!("socks5://clowder:***@{}", self.local_addr)
     }
 
     pub async fn shutdown(mut self) {
@@ -57,6 +67,8 @@ pub async fn start(cmd_tx: mpsc::Sender<EngineCmd>) -> Result<SocksHandle> {
         .await
         .context("bind SOCKS5 listener")?;
     let local_addr = listener.local_addr().context("read SOCKS5 local_addr")?;
+    let auth_token = random_auth_token();
+    let auth_token_for_task = auth_token.clone();
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
 
     let task = tokio::spawn(async move {
@@ -71,8 +83,9 @@ pub async fn start(cmd_tx: mpsc::Sender<EngineCmd>) -> Result<SocksHandle> {
                         Ok((stream, peer)) => {
                             tracing::debug!(?peer, "socks5 accepted");
                             let cmd_tx = cmd_tx.clone();
+                            let auth_token = auth_token_for_task.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = handle_client(stream, cmd_tx).await {
+                                if let Err(err) = handle_client(stream, cmd_tx, &auth_token).await {
                                     tracing::warn!(error = %format!("{err:#}"), "socks5 client error");
                                 }
                             });
@@ -89,13 +102,24 @@ pub async fn start(cmd_tx: mpsc::Sender<EngineCmd>) -> Result<SocksHandle> {
 
     Ok(SocksHandle {
         local_addr,
+        auth_token,
         shutdown: Some(shutdown_tx),
         task: Some(task),
     })
 }
 
-async fn handle_client(mut stream: TcpStream, cmd_tx: mpsc::Sender<EngineCmd>) -> Result<()> {
-    negotiate_method(&mut stream).await?;
+fn random_auth_token() -> String {
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+async fn handle_client(
+    mut stream: TcpStream,
+    cmd_tx: mpsc::Sender<EngineCmd>,
+    auth_token: &str,
+) -> Result<()> {
+    negotiate_method(&mut stream, auth_token).await?;
     let target = read_request(&mut stream).await?;
 
     let dst = match resolve(&target, &cmd_tx).await {
@@ -127,7 +151,7 @@ async fn handle_client(mut stream: TcpStream, cmd_tx: mpsc::Sender<EngineCmd>) -
     bridge(stream, session).await
 }
 
-async fn negotiate_method(stream: &mut TcpStream) -> Result<()> {
+async fn negotiate_method(stream: &mut TcpStream, auth_token: &str) -> Result<()> {
     let mut header = [0u8; 2];
     stream
         .read_exact(&mut header)
@@ -143,8 +167,8 @@ async fn negotiate_method(stream: &mut TcpStream) -> Result<()> {
         .await
         .context("read SOCKS5 methods")?;
 
-    let choice = if methods.contains(&METHOD_NONE) {
-        METHOD_NONE
+    let choice = if methods.contains(&METHOD_USERNAME_PASSWORD) {
+        METHOD_USERNAME_PASSWORD
     } else {
         stream
             .write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE])
@@ -156,7 +180,56 @@ async fn negotiate_method(stream: &mut TcpStream) -> Result<()> {
         .write_all(&[SOCKS_VERSION, choice])
         .await
         .context("write SOCKS5 method ack")?;
+    authenticate_userpass(stream, auth_token).await?;
     Ok(())
+}
+
+async fn authenticate_userpass(stream: &mut TcpStream, auth_token: &str) -> Result<()> {
+    let mut header = [0u8; 2];
+    stream
+        .read_exact(&mut header)
+        .await
+        .context("read SOCKS5 username/password header")?;
+    if header[0] != USERPASS_VERSION {
+        write_userpass_status(stream, USERPASS_STATUS_DENIED).await?;
+        bail!(
+            "unsupported SOCKS5 username/password version {:#x}",
+            header[0]
+        );
+    }
+
+    let username_len = header[1] as usize;
+    let mut username = vec![0u8; username_len];
+    stream
+        .read_exact(&mut username)
+        .await
+        .context("read SOCKS5 username")?;
+
+    let mut pass_len = [0u8; 1];
+    stream
+        .read_exact(&mut pass_len)
+        .await
+        .context("read SOCKS5 password length")?;
+    let mut password = vec![0u8; pass_len[0] as usize];
+    stream
+        .read_exact(&mut password)
+        .await
+        .context("read SOCKS5 password")?;
+
+    if username == b"clowder" && password == auth_token.as_bytes() {
+        write_userpass_status(stream, USERPASS_STATUS_OK).await?;
+        Ok(())
+    } else {
+        write_userpass_status(stream, USERPASS_STATUS_DENIED).await?;
+        bail!("SOCKS5 authentication failed");
+    }
+}
+
+async fn write_userpass_status(stream: &mut TcpStream, status: u8) -> Result<()> {
+    stream
+        .write_all(&[USERPASS_VERSION, status])
+        .await
+        .context("write SOCKS5 username/password status")
 }
 
 enum Target {
@@ -286,4 +359,38 @@ async fn bridge(stream: TcpStream, mut session: TcpSession) -> Result<()> {
 
     let _ = tokio::join!(upload, download);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_token_is_url_safe() {
+        let token = random_auth_token();
+        assert_eq!(token.len(), 32);
+        assert!(
+            token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
+    }
+
+    #[test]
+    fn display_url_redacts_auth_token() {
+        let handle = SocksHandle {
+            local_addr: "127.0.0.1:12345".parse().unwrap(),
+            auth_token: "secret-token".to_string(),
+            shutdown: None,
+            task: None,
+        };
+        assert_eq!(
+            handle.proxy_url(),
+            "socks5://clowder:secret-token@127.0.0.1:12345"
+        );
+        assert_eq!(
+            handle.proxy_display_url(),
+            "socks5://clowder:***@127.0.0.1:12345"
+        );
+    }
 }
