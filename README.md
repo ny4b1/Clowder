@@ -87,7 +87,7 @@ Auto-updates require a one-time setup:
 
 After that, cutting a release is just:
 ```sh
-git tag v0.4.0 && git push --tags
+git tag v0.5.0 && git push --tags
 ```
 The workflow builds for all three platforms, signs the artifacts,
 publishes a GitHub Release, and writes the `latest.json` that
