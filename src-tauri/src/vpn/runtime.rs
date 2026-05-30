@@ -224,6 +224,15 @@ type PendingDns = HashMap<u16, (String, DnsReplySender, StdInstant)>;
 type InflightDns = HashMap<String, Vec<DnsReplySender>>;
 type DnsCache = HashMap<String, (Vec<IpAddr>, StdInstant)>;
 
+struct DnsResolver {
+    handle: SocketHandle,
+    server: IpAddr,
+    id_counter: u16,
+    pending: PendingDns,
+    inflight: InflightDns,
+    cache: DnsCache,
+}
+
 async fn run_engine(
     cfg: PreparedConfig,
     mut cmd_rx: mpsc::Receiver<EngineCmd>,
@@ -297,11 +306,7 @@ async fn run_engine(
         .bind(DNS_LOCAL_PORT)
         .map_err(|err| anyhow!("bind DNS UDP socket on {DNS_LOCAL_PORT}: {err:?}"))?;
     let dns_handle = sockets.add(dns_socket);
-    let mut pending_dns: PendingDns = HashMap::new();
-    let mut inflight_dns: InflightDns = HashMap::new();
-    let mut dns_cache: DnsCache = HashMap::new();
-    let mut dns_id_counter: u16 = 1;
-    let dns_server = cfg.dns_servers[0];
+    let mut dns = DnsResolver::new(dns_handle, cfg.dns_servers[0]);
     let mut ready_tx = Some(ready_tx);
 
     flush_tunn_handshake(&mut tunn, &udp, &mut send_scratch).await;
@@ -366,17 +371,7 @@ async fn run_engine(
                         }
                     }
                     Some(EngineCmd::ResolveHost { domain, reply }) => {
-                        resolve_or_send_dns_query(
-                            &mut sockets,
-                            dns_handle,
-                            dns_server,
-                            &mut dns_id_counter,
-                            &mut pending_dns,
-                            &mut inflight_dns,
-                            &mut dns_cache,
-                            domain,
-                            reply,
-                        );
+                        dns.resolve_or_send(&mut sockets, domain, reply);
                     }
                     None => {
                         tracing::info!("vpn engine: command channel closed");
@@ -396,17 +391,11 @@ async fn run_engine(
         iface.poll(now, &mut device, &mut sockets);
 
         pump_sessions(&mut sockets, &mut managed);
-        drain_dns_responses(
-            &mut sockets,
-            dns_handle,
-            &mut pending_dns,
-            &mut inflight_dns,
-            &mut dns_cache,
-        );
+        dns.drain_responses(&mut sockets);
         flush_outbound(&queues, &mut tunn, &udp, &mut send_scratch).await;
 
         sweep_closed(&mut sockets, &mut managed);
-        expire_dns(&mut pending_dns, &mut inflight_dns);
+        dns.expire();
     }
 
     Ok(())
@@ -632,113 +621,117 @@ async fn flush_tunn_handshake(tunn: &mut Tunn, udp: &UdpSocket, scratch: &mut [u
     }
 }
 
-fn resolve_or_send_dns_query(
-    sockets: &mut SocketSet<'static>,
-    dns_handle: SocketHandle,
-    dns_server: IpAddr,
-    dns_id_counter: &mut u16,
-    pending: &mut PendingDns,
-    inflight: &mut InflightDns,
-    cache: &mut DnsCache,
-    domain: String,
-    reply: DnsReplySender,
-) {
-    let now = StdInstant::now();
-    cache.retain(|_, (_, expires_at)| now <= *expires_at);
-    let key = domain.trim_end_matches('.').to_ascii_lowercase();
-
-    if let Some((ips, _)) = cache.get(&key) {
-        let _ = reply.send(Ok(ips.clone()));
-        return;
+impl DnsResolver {
+    fn new(handle: SocketHandle, server: IpAddr) -> Self {
+        Self {
+            handle,
+            server,
+            id_counter: 1,
+            pending: HashMap::new(),
+            inflight: HashMap::new(),
+            cache: HashMap::new(),
+        }
     }
 
-    if let Some(waiters) = inflight.get_mut(&key) {
-        waiters.push(reply);
-        return;
+    fn next_id(&mut self) -> u16 {
+        let id = self.id_counter;
+        self.id_counter = match self.id_counter.checked_add(1) {
+            Some(v) if v != 0 => v,
+            _ => 1,
+        };
+        id
     }
 
-    let id = next_dns_id(dns_id_counter);
-    let query = match dns::build_query(id, &domain, dns::TYPE_A) {
-        Ok(q) => q,
-        Err(err) => {
-            let _ = reply.send(Err(err));
+    fn resolve_or_send(
+        &mut self,
+        sockets: &mut SocketSet<'static>,
+        domain: String,
+        reply: DnsReplySender,
+    ) {
+        let now = StdInstant::now();
+        self.cache.retain(|_, (_, expires_at)| now <= *expires_at);
+        let key = domain.trim_end_matches('.').to_ascii_lowercase();
+
+        if let Some((ips, _)) = self.cache.get(&key) {
+            let _ = reply.send(Ok(ips.clone()));
             return;
         }
-    };
-    let endpoint = IpEndpoint::new(IpAddress::from(dns_server), DNS_REMOTE_PORT);
-    let sock = sockets.get_mut::<udp::Socket>(dns_handle);
-    match sock.send_slice(&query, endpoint) {
-        Ok(()) => {
-            pending.insert(id, (key.clone(), reply, now + DNS_TIMEOUT));
-            inflight.insert(key, Vec::new());
-        }
-        Err(err) => {
-            let _ = reply.send(Err(anyhow!("DNS send failed: {err:?}")));
-        }
-    }
-}
 
-fn next_dns_id(counter: &mut u16) -> u16 {
-    let id = *counter;
-    *counter = match counter.checked_add(1) {
-        Some(v) if v != 0 => v,
-        _ => 1,
-    };
-    id
-}
-
-fn drain_dns_responses(
-    sockets: &mut SocketSet<'static>,
-    dns_handle: SocketHandle,
-    pending: &mut PendingDns,
-    inflight: &mut InflightDns,
-    cache: &mut DnsCache,
-) {
-    loop {
-        let sock = sockets.get_mut::<udp::Socket>(dns_handle);
-        let payload = match sock.recv() {
-            Ok((data, _meta)) => data.to_vec(),
-            Err(_) => break,
-        };
-        if payload.len() < 12 {
-            continue;
+        if let Some(waiters) = self.inflight.get_mut(&key) {
+            waiters.push(reply);
+            return;
         }
-        let id = u16::from_be_bytes([payload[0], payload[1]]);
-        let Some((domain, reply, _)) = pending.remove(&id) else {
-            continue;
+
+        let id = self.next_id();
+        let query = match dns::build_query(id, &domain, dns::TYPE_A) {
+            Ok(q) => q,
+            Err(err) => {
+                let _ = reply.send(Err(err));
+                return;
+            }
         };
-        let waiters = inflight.remove(&domain).unwrap_or_default();
-        match dns::parse_response(&payload, id) {
-            Ok(ips) => {
-                cache.insert(domain, (ips.clone(), StdInstant::now() + DNS_CACHE_TTL));
-                let _ = reply.send(Ok(ips.clone()));
-                for waiter in waiters {
-                    let _ = waiter.send(Ok(ips.clone()));
-                }
+        let endpoint = IpEndpoint::new(IpAddress::from(self.server), DNS_REMOTE_PORT);
+        let sock = sockets.get_mut::<udp::Socket>(self.handle);
+        match sock.send_slice(&query, endpoint) {
+            Ok(()) => {
+                self.pending.insert(id, (key.clone(), reply, now + DNS_TIMEOUT));
+                self.inflight.insert(key, Vec::new());
             }
             Err(err) => {
-                let message = format!("{err:#}");
-                let _ = reply.send(Err(anyhow!(message.clone())));
-                for waiter in waiters {
-                    let _ = waiter.send(Err(anyhow!(message.clone())));
+                let _ = reply.send(Err(anyhow!("DNS send failed: {err:?}")));
+            }
+        }
+    }
+
+    fn drain_responses(&mut self, sockets: &mut SocketSet<'static>) {
+        loop {
+            let sock = sockets.get_mut::<udp::Socket>(self.handle);
+            let payload = match sock.recv() {
+                Ok((data, _meta)) => data.to_vec(),
+                Err(_) => break,
+            };
+            if payload.len() < 12 {
+                continue;
+            }
+            let id = u16::from_be_bytes([payload[0], payload[1]]);
+            let Some((domain, reply, _)) = self.pending.remove(&id) else {
+                continue;
+            };
+            let waiters = self.inflight.remove(&domain).unwrap_or_default();
+            match dns::parse_response(&payload, id) {
+                Ok(ips) => {
+                    self.cache
+                        .insert(domain, (ips.clone(), StdInstant::now() + DNS_CACHE_TTL));
+                    let _ = reply.send(Ok(ips.clone()));
+                    for waiter in waiters {
+                        let _ = waiter.send(Ok(ips.clone()));
+                    }
+                }
+                Err(err) => {
+                    let message = format!("{err:#}");
+                    let _ = reply.send(Err(anyhow!(message.clone())));
+                    for waiter in waiters {
+                        let _ = waiter.send(Err(anyhow!(message.clone())));
+                    }
                 }
             }
         }
     }
-}
 
-fn expire_dns(pending: &mut PendingDns, inflight: &mut InflightDns) {
-    let now = StdInstant::now();
-    let expired: Vec<u16> = pending
-        .iter()
-        .filter_map(|(id, (_, _, deadline))| (now > *deadline).then_some(*id))
-        .collect();
-    for id in expired {
-        if let Some((domain, reply, _)) = pending.remove(&id) {
-            let message = format!("DNS query {id:#06x} timed out");
-            let _ = reply.send(Err(anyhow!(message.clone())));
-            for waiter in inflight.remove(&domain).unwrap_or_default() {
-                let _ = waiter.send(Err(anyhow!(message.clone())));
+    fn expire(&mut self) {
+        let now = StdInstant::now();
+        let expired: Vec<u16> = self
+            .pending
+            .iter()
+            .filter_map(|(id, (_, _, deadline))| (now > *deadline).then_some(*id))
+            .collect();
+        for id in expired {
+            if let Some((domain, reply, _)) = self.pending.remove(&id) {
+                let message = format!("DNS query {id:#06x} timed out");
+                let _ = reply.send(Err(anyhow!(message.clone())));
+                for waiter in self.inflight.remove(&domain).unwrap_or_default() {
+                    let _ = waiter.send(Err(anyhow!(message.clone())));
+                }
             }
         }
     }
