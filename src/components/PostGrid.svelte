@@ -11,6 +11,7 @@
     selectedId: number | null;
     previews: Record<number, string>;
     failedPreviews: Record<number, boolean>;
+    viewerOpen: boolean;
     onSelect: (id: number) => void;
     onOpenOriginal: (post: Post) => void;
     onPreviewError: (postId: number) => void;
@@ -23,6 +24,7 @@
     selectedId,
     previews,
     failedPreviews,
+    viewerOpen,
     onSelect,
     onOpenOriginal,
     onPreviewError,
@@ -88,6 +90,7 @@
   }
 
   function onCardKeydown(event: KeyboardEvent, index: number, post: Post) {
+    if (viewerOpen) return;
     if (event.key === "ArrowLeft") {
       event.preventDefault();
       event.stopPropagation();

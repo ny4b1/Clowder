@@ -334,6 +334,7 @@
       selectedId={searchStore.selectedId}
       previews={searchStore.previews}
       failedPreviews={searchStore.failedPreviews}
+      viewerOpen={!!viewerStore.viewer}
       onSelect={(id) => searchStore.selectId(id)}
       onOpenOriginal={openOriginal}
       onPreviewError={(id) => searchStore.markPreviewFailed(id)}

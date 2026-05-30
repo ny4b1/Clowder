@@ -98,9 +98,11 @@ fn finish<T>(
     };
     let chain = format!("{err:#}");
     if chain.contains(SESSION_EXPIRED) {
-        if let Err(clear_err) = credentials::clear() {
-            tracing::warn!(error = %format!("{clear_err:#}"), "clear credentials on session expiry failed");
-        }
+        tauri::async_runtime::spawn(async {
+            if let Err(clear_err) = credentials::clear().await {
+                tracing::warn!(error = %format!("{clear_err:#}"), "clear credentials on session expiry failed");
+            }
+        });
         let _ = app.emit("auth-expired", ());
         tracing::info!(operation, "e621 session expired; signed out");
         return Err(SESSION_EXPIRED.to_string());
@@ -281,6 +283,7 @@ async fn sign_in(
     )?;
 
     credentials::save(&creds)
+        .await
         .map_err(|err| report("credentials_save", "Could not save credentials.", err))?;
     client.set_credentials(Some(creds.clone()));
 
@@ -292,6 +295,7 @@ async fn sign_in(
 #[tauri::command]
 async fn sign_out(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     credentials::clear()
+        .await
         .map_err(|err| report("credentials_clear", "Could not clear credentials.", err))?;
     let client = get_client(&state).await?;
     client.set_credentials(None);
@@ -444,7 +448,9 @@ async fn import_vpn_config(
     let content = fs::read_to_string(&path)
         .map_err(|err| format!("could not read VPN config file: {err}"))?;
     let cfg = vpn::parse(&content).map_err(|err| report_chain("vpn_parse", err))?;
-    vpn::storage::save(&cfg).map_err(|err| report_chain("vpn_save", err))?;
+    vpn::storage::save(&cfg)
+        .await
+        .map_err(|err| report_chain("vpn_save", err))?;
     read_status(&state).await
 }
 
@@ -454,6 +460,7 @@ async fn enable_vpn(
     state: State<'_, Arc<AppState>>,
 ) -> Result<VpnStatus, String> {
     let cfg = vpn::storage::load()
+        .await
         .map_err(|err| report_chain("vpn_load", err))?
         .ok_or_else(|| "import a VPN config first".to_string())?;
 
@@ -501,8 +508,12 @@ async fn clear_vpn_config(
 ) -> Result<VpnStatus, String> {
     stop_tunnel(&state).await;
     deregister_mullvad_device().await;
-    vpn::storage::clear_mullvad().map_err(|err| report_chain("vpn_clear", err))?;
-    vpn::storage::clear().map_err(|err| report_chain("vpn_clear", err))?;
+    vpn::storage::clear_mullvad()
+        .await
+        .map_err(|err| report_chain("vpn_clear", err))?;
+    vpn::storage::clear()
+        .await
+        .map_err(|err| report_chain("vpn_clear", err))?;
     *state.mullvad_relays.lock().await = None;
     persist_vpn_enabled(&app, &state, false)?;
     read_status(&state).await
@@ -525,7 +536,9 @@ async fn mullvad_sign_in(
         .await
         .map_err(|err| report_chain("mullvad_token", err))?;
 
-    let existing = vpn::storage::load_mullvad().map_err(|err| report_chain("mullvad_load", err))?;
+    let existing = vpn::storage::load_mullvad()
+        .await
+        .map_err(|err| report_chain("mullvad_load", err))?;
 
     if let Some(prev) = &existing
         && prev.account_number != account
@@ -587,8 +600,12 @@ async fn mullvad_sign_in(
 
     let cfg = vpn::mullvad::build_config(&profile, &chosen)
         .map_err(|err| report_chain("mullvad_config", err))?;
-    vpn::storage::save(&cfg).map_err(|err| report_chain("mullvad_save", err))?;
-    vpn::storage::save_mullvad(&profile).map_err(|err| report_chain("mullvad_save", err))?;
+    vpn::storage::save(&cfg)
+        .await
+        .map_err(|err| report_chain("mullvad_save", err))?;
+    vpn::storage::save_mullvad(&profile)
+        .await
+        .map_err(|err| report_chain("mullvad_save", err))?;
     *state.mullvad_relays.lock().await = Some(relays);
 
     if state.vpn.lock().await.is_some() {
@@ -622,6 +639,7 @@ async fn mullvad_select_relay(
     state: State<'_, Arc<AppState>>,
 ) -> Result<VpnStatus, String> {
     let mut profile = vpn::storage::load_mullvad()
+        .await
         .map_err(|err| report_chain("mullvad_load", err))?
         .ok_or_else(|| "sign in to Mullvad first".to_string())?;
 
@@ -648,8 +666,12 @@ async fn mullvad_select_relay(
 
     let cfg = vpn::mullvad::build_config(&profile, &chosen)
         .map_err(|err| report_chain("mullvad_config", err))?;
-    vpn::storage::save(&cfg).map_err(|err| report_chain("mullvad_save", err))?;
-    vpn::storage::save_mullvad(&profile).map_err(|err| report_chain("mullvad_save", err))?;
+    vpn::storage::save(&cfg)
+        .await
+        .map_err(|err| report_chain("mullvad_save", err))?;
+    vpn::storage::save_mullvad(&profile)
+        .await
+        .map_err(|err| report_chain("mullvad_save", err))?;
 
     if state.vpn.lock().await.is_some() {
         swap_tunnel(&state, cfg).await?;
@@ -665,15 +687,19 @@ async fn mullvad_sign_out(
 ) -> Result<VpnStatus, String> {
     stop_tunnel(&state).await;
     deregister_mullvad_device().await;
-    vpn::storage::clear_mullvad().map_err(|err| report_chain("mullvad_clear", err))?;
-    vpn::storage::clear().map_err(|err| report_chain("mullvad_clear", err))?;
+    vpn::storage::clear_mullvad()
+        .await
+        .map_err(|err| report_chain("mullvad_clear", err))?;
+    vpn::storage::clear()
+        .await
+        .map_err(|err| report_chain("mullvad_clear", err))?;
     *state.mullvad_relays.lock().await = None;
     persist_vpn_enabled(&app, &state, false)?;
     read_status(&state).await
 }
 
 async fn deregister_mullvad_device() {
-    let profile = match vpn::storage::load_mullvad() {
+    let profile = match vpn::storage::load_mullvad().await {
         Ok(Some(profile)) => profile,
         _ => return,
     };
@@ -701,8 +727,12 @@ fn derive_public(private_key: &str) -> Option<String> {
 }
 
 async fn read_status(state: &State<'_, Arc<AppState>>) -> Result<VpnStatus, String> {
-    let stored = vpn::storage::load().map_err(|err| report_chain("vpn_status", err))?;
-    let mullvad = vpn::storage::load_mullvad().map_err(|err| report_chain("vpn_status", err))?;
+    let stored = vpn::storage::load()
+        .await
+        .map_err(|err| report_chain("vpn_status", err))?;
+    let mullvad = vpn::storage::load_mullvad()
+        .await
+        .map_err(|err| report_chain("vpn_status", err))?;
     let vpn_guard = state.vpn.lock().await;
 
     let status = match &mullvad {
@@ -772,7 +802,7 @@ async fn get_client_inner(state: &Arc<AppState>) -> Result<Client, String> {
         .await
         .map_err(|err| report("client_init", "Could not initialize HTTP client.", err))?;
 
-    match credentials::load() {
+    match credentials::load().await {
         Ok(Some(creds)) => client.set_credentials(Some(creds)),
         Ok(None) => {}
         Err(err) => tracing::warn!(error = %format!("{err:#}"), "could not load saved credentials"),
@@ -1246,7 +1276,7 @@ fn main() {
             app.manage(app_state.clone());
             if auto_start {
                 tauri::async_runtime::spawn(async move {
-                    match vpn::storage::load() {
+                    match vpn::storage::load().await {
                         Ok(Some(cfg)) => match vpn::VpnHandle::start(cfg).await {
                             Ok(handle) => {
                                 *app_state.vpn.lock().await = Some(handle);
