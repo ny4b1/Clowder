@@ -44,7 +44,8 @@ fn site_for_url(raw: &str) -> Result<(url::Url, Site), String> {
     let host = parsed
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?;
-    let site = Site::from_media_host(host).ok_or_else(|| format!("disallowed media host: {host}"))?;
+    let site =
+        Site::from_media_host(host).ok_or_else(|| format!("disallowed media host: {host}"))?;
     Ok((parsed, site))
 }
 

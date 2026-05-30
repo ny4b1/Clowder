@@ -208,9 +208,7 @@ impl Client {
         }
 
         let resp = self
-            .apply_auth(
-                self.http.get(self.url("tags.json")).query(&query),
-            )
+            .apply_auth(self.http.get(self.url("tags.json")).query(&query))
             .send()
             .await
             .context("send tag autocomplete request")?;
@@ -348,13 +346,11 @@ impl Client {
 
         let limit = limit.clamp(1, MAX_LIMIT);
         let resp = self
-            .apply_auth(
-                self.http.get(self.url("comments.json")).query(&[
-                        ("search[post_id]", post_id.to_string()),
-                        ("limit", limit.to_string()),
-                        ("group_by", "comment".to_string()),
-                    ]),
-            )
+            .apply_auth(self.http.get(self.url("comments.json")).query(&[
+                ("search[post_id]", post_id.to_string()),
+                ("limit", limit.to_string()),
+                ("group_by", "comment".to_string()),
+            ]))
             .send()
             .await
             .context("send comments request")?;
