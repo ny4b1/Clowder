@@ -674,7 +674,8 @@ impl DnsResolver {
         let sock = sockets.get_mut::<udp::Socket>(self.handle);
         match sock.send_slice(&query, endpoint) {
             Ok(()) => {
-                self.pending.insert(id, (key.clone(), reply, now + DNS_TIMEOUT));
+                self.pending
+                    .insert(id, (key.clone(), reply, now + DNS_TIMEOUT));
                 self.inflight.insert(key, Vec::new());
             }
             Err(err) => {
