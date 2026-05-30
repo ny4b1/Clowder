@@ -5,16 +5,21 @@
 ![Last Commit](https://img.shields.io/github/last-commit/nyattic/Clowder?style=flat&color=f59e0b)
 ![License](https://img.shields.io/badge/license-GPL--3.0-8b5cf6?style=flat)
 
-A fast, native desktop viewer for e621.
+A fast, native desktop viewer for e621 and e6ai.
 
 Browse in a small, focused window — no web browser, no ads, and your
 account credentials stay in your computer's secure password store.
+Switch between e621 and e6ai from the header; each site keeps its own
+search, account, and favorites.
 
 ## Features
 
+- Browse e621 and e6ai, switchable from the header with independent
+  state per site
 - Quick tag search with autocomplete and search history
 - Full-resolution viewer for images, GIFs, and videos
-- Sign in with your e621 account to favorite, comment, and edit tags
+- Sign in with your e621 or e6ai account to favorite, comment, and edit
+  tags (a separate account per site)
 - One-click downloads with a customizable filename
 - Per-app VPN to bypass regional blocks — sign in with just a Mullvad
   account number (or import any WireGuard config); only Clowder's traffic
@@ -33,15 +38,15 @@ Download the latest build for your platform from the
 
 ## Bypassing regional blocks (optional)
 
-If e621 is blocked in your country, Clowder can route **its own traffic
-only** through a WireGuard peer — the rest of your system keeps using
-your normal connection.
+If e621 or e6ai is blocked in your country, Clowder can route **its own
+traffic only** through a WireGuard peer — the rest of your system keeps
+using your normal connection.
 
 **With a Mullvad account (easiest):**
 
 1. Open **Settings → VPN** and enter your 16-digit Mullvad account number,
    then hit **Sign in**.
-2. Pick a country and city where e621 is reachable from the dropdowns.
+2. Pick a country and city where the site is reachable from the dropdowns.
 3. Hit **Connect**. The tunnel auto-starts on subsequent launches and is
    treated as connected only after the WireGuard handshake completes.
 
@@ -70,14 +75,16 @@ host do not repeat the same lookup.
 ## Usage
 
 1. Launch Clowder.
-2. Type tags into the search bar at the top.
-3. Click a post to inspect it; double-click (or press Enter) to open
+2. Pick a site (e621 or e6ai) with the switcher in the header.
+3. Type tags into the search bar at the top.
+4. Click a post to inspect it; double-click (or press Enter) to open
    it full-size.
-4. (Optional) Open Settings and sign in with your e621 username and API
-   key to favorite posts, comment, and edit tags.
+5. (Optional) Open Settings and sign in with your username and API key
+   for that site to favorite posts, comment, and edit tags. Each site
+   has its own account.
 
-You can find your API key on your e621 account page under
-**Manage API Access**.
+You can find your API key on your account page (e621.net or e6ai.net)
+under **Manage API Access**.
 
 ## Building from source
 
@@ -119,4 +126,4 @@ existing installs poll for updates.
 
 ## License
 
-[GNU GPL v3.0](LICENSE). Not affiliated with or endorsed by e621.
+[GNU GPL v3.0](LICENSE). Not affiliated with or endorsed by e621 or e6ai.
