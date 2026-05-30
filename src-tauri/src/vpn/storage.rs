@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use keyring::{Entry, Error as KeyringError};
+use keyring_core::Error as KeyringError;
 
 use super::config::WgConfig;
 use super::mullvad::MullvadProfile;
@@ -8,12 +8,12 @@ const SERVICE: &str = "com.nyabi.clowder";
 const ACCOUNT: &str = "vpn";
 const MULLVAD_ACCOUNT: &str = "vpn-mullvad";
 
-fn entry() -> Result<Entry> {
-    Entry::new(SERVICE, ACCOUNT).context("open VPN keychain entry")
+fn entry() -> Result<keyring_core::Entry> {
+    crate::keychain::entry(SERVICE, ACCOUNT).context("open VPN keychain entry")
 }
 
-fn mullvad_entry() -> Result<Entry> {
-    Entry::new(SERVICE, MULLVAD_ACCOUNT).context("open Mullvad keychain entry")
+fn mullvad_entry() -> Result<keyring_core::Entry> {
+    crate::keychain::entry(SERVICE, MULLVAD_ACCOUNT).context("open Mullvad keychain entry")
 }
 
 pub fn load() -> Result<Option<WgConfig>> {

@@ -31,8 +31,10 @@ const IDLE_POLL_MAX: Duration = Duration::from_millis(250);
 const DNS_LOCAL_PORT: u16 = 35353;
 const DNS_REMOTE_PORT: u16 = 53;
 const DNS_TIMEOUT: Duration = Duration::from_secs(5);
+const DNS_CACHE_TTL: Duration = Duration::from_secs(60);
+const HANDSHAKE_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const DNS_PKT_BUF: usize = 4096;
-const DNS_META_SLOTS: usize = 16;
+const DNS_META_SLOTS: usize = 64;
 const FALLBACK_DNS: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 
 pub enum EngineCmd {
@@ -95,19 +97,41 @@ pub async fn start(cfg: WgConfig) -> Result<EngineHandle> {
     let prepared = PreparedConfig::from_wg(&cfg)?;
     let (cmd_tx, cmd_rx) = mpsc::channel(CHANNEL_DEPTH);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let (ready_tx, ready_rx) = oneshot::channel();
     let cmd_tx_clone = cmd_tx.clone();
 
     let task = tokio::spawn(async move {
-        if let Err(err) = run_engine(prepared, cmd_rx, shutdown_rx, cmd_tx_clone).await {
+        if let Err(err) = run_engine(prepared, cmd_rx, shutdown_rx, cmd_tx_clone, ready_tx).await {
             tracing::error!(error = %format!("{err:#}"), "vpn engine exited with error");
         }
     });
 
-    Ok(EngineHandle {
+    let handle = EngineHandle {
         cmd_tx,
         shutdown: Some(shutdown_tx),
         task: Some(task),
-    })
+    };
+
+    match tokio::time::timeout(HANDSHAKE_READY_TIMEOUT, ready_rx).await {
+        Ok(Ok(Ok(()))) => Ok(handle),
+        Ok(Ok(Err(err))) => {
+            handle.shutdown().await;
+            Err(err)
+        }
+        Ok(Err(_)) => {
+            handle.shutdown().await;
+            Err(anyhow!(
+                "VPN engine exited before WireGuard handshake completed"
+            ))
+        }
+        Err(_) => {
+            handle.shutdown().await;
+            Err(anyhow!(
+                "WireGuard handshake timed out after {}s; the VPN server did not answer the handshake. Check that the Mullvad device is still registered, the selected server is reachable, and UDP/51820 is not blocked.",
+                HANDSHAKE_READY_TIMEOUT.as_secs()
+            ))
+        }
+    }
 }
 
 struct PreparedConfig {
@@ -161,6 +185,13 @@ impl PreparedConfig {
         }
         Err(anyhow!("VPN config has no IPv4 Address for interface"))
     }
+
+    fn source_ipv6(&self) -> Option<std::net::Ipv6Addr> {
+        self.source_addrs.iter().find_map(|cidr| match cidr.addr {
+            IpAddr::V6(v6) => Some(v6),
+            IpAddr::V4(_) => None,
+        })
+    }
 }
 
 fn decode_key(input: &str, field: &str) -> Result<[u8; 32]> {
@@ -189,13 +220,16 @@ struct ManagedSocket {
 }
 
 type DnsReplySender = oneshot::Sender<Result<Vec<IpAddr>>>;
-type PendingDns = HashMap<u16, (DnsReplySender, StdInstant)>;
+type PendingDns = HashMap<u16, (String, DnsReplySender, StdInstant)>;
+type InflightDns = HashMap<String, Vec<DnsReplySender>>;
+type DnsCache = HashMap<String, (Vec<IpAddr>, StdInstant)>;
 
 async fn run_engine(
     cfg: PreparedConfig,
     mut cmd_rx: mpsc::Receiver<EngineCmd>,
     mut shutdown_rx: oneshot::Receiver<()>,
     cmd_tx_for_sessions: mpsc::Sender<EngineCmd>,
+    ready_tx: oneshot::Sender<Result<()>>,
 ) -> Result<()> {
     let udp = UdpSocket::bind("0.0.0.0:0")
         .await
@@ -220,6 +254,7 @@ async fn run_engine(
     let mut iface = Interface::new(iface_config, &mut device, SmolInstant::now());
 
     let source_ipv4 = cfg.source_ipv4()?;
+    let source_ipv6 = cfg.source_ipv6();
     iface.update_ip_addrs(|ips| {
         for cidr in &cfg.source_addrs {
             let prefix = cidr.prefix;
@@ -229,6 +264,16 @@ async fn run_engine(
             }
         }
     });
+
+    let routes = iface.routes_mut();
+    if let Err(err) = routes.add_default_ipv4_route(source_ipv4) {
+        tracing::warn!(?err, "could not add default IPv4 route");
+    }
+    if let Some(v6) = source_ipv6
+        && let Err(err) = routes.add_default_ipv6_route(v6)
+    {
+        tracing::warn!(?err, "could not add default IPv6 route");
+    }
 
     let mut sockets = SocketSet::new(Vec::new());
     let mut managed: HashMap<SocketHandle, ManagedSocket> = HashMap::new();
@@ -253,8 +298,11 @@ async fn run_engine(
         .map_err(|err| anyhow!("bind DNS UDP socket on {DNS_LOCAL_PORT}: {err:?}"))?;
     let dns_handle = sockets.add(dns_socket);
     let mut pending_dns: PendingDns = HashMap::new();
+    let mut inflight_dns: InflightDns = HashMap::new();
+    let mut dns_cache: DnsCache = HashMap::new();
     let mut dns_id_counter: u16 = 1;
     let dns_server = cfg.dns_servers[0];
+    let mut ready_tx = Some(ready_tx);
 
     flush_tunn_handshake(&mut tunn, &udp, &mut send_scratch).await;
 
@@ -284,6 +332,7 @@ async fn run_engine(
                     Ok(n) => {
                         let data = udp_buf[..n].to_vec();
                         handle_udp_in(&mut tunn, &udp, &queues, &data, &mut send_scratch).await;
+                        notify_ready_if_handshaked(&tunn, &mut ready_tx);
                     }
                     Err(err) => {
                         tracing::warn!(%err, "vpn UDP recv error");
@@ -317,12 +366,14 @@ async fn run_engine(
                         }
                     }
                     Some(EngineCmd::ResolveHost { domain, reply }) => {
-                        send_dns_query(
+                        resolve_or_send_dns_query(
                             &mut sockets,
                             dns_handle,
                             dns_server,
                             &mut dns_id_counter,
                             &mut pending_dns,
+                            &mut inflight_dns,
+                            &mut dns_cache,
                             domain,
                             reply,
                         );
@@ -345,11 +396,17 @@ async fn run_engine(
         iface.poll(now, &mut device, &mut sockets);
 
         pump_sessions(&mut sockets, &mut managed);
-        drain_dns_responses(&mut sockets, dns_handle, &mut pending_dns);
+        drain_dns_responses(
+            &mut sockets,
+            dns_handle,
+            &mut pending_dns,
+            &mut inflight_dns,
+            &mut dns_cache,
+        );
         flush_outbound(&queues, &mut tunn, &udp, &mut send_scratch).await;
 
         sweep_closed(&mut sockets, &mut managed);
-        expire_dns(&mut pending_dns);
+        expire_dns(&mut pending_dns, &mut inflight_dns);
     }
 
     Ok(())
@@ -510,6 +567,15 @@ async fn handle_udp_in(
     }
 }
 
+fn notify_ready_if_handshaked(tunn: &Tunn, ready_tx: &mut Option<oneshot::Sender<Result<()>>>) {
+    if ready_tx.is_some() && tunn.stats().0.is_some() {
+        if let Some(tx) = ready_tx.take() {
+            let _ = tx.send(Ok(()));
+        }
+        tracing::info!("vpn wireguard handshake completed");
+    }
+}
+
 async fn flush_outbound(
     queues: &PacketQueues,
     tunn: &mut Tunn,
@@ -566,15 +632,31 @@ async fn flush_tunn_handshake(tunn: &mut Tunn, udp: &UdpSocket, scratch: &mut [u
     }
 }
 
-fn send_dns_query(
+fn resolve_or_send_dns_query(
     sockets: &mut SocketSet<'static>,
     dns_handle: SocketHandle,
     dns_server: IpAddr,
     dns_id_counter: &mut u16,
     pending: &mut PendingDns,
+    inflight: &mut InflightDns,
+    cache: &mut DnsCache,
     domain: String,
     reply: DnsReplySender,
 ) {
+    let now = StdInstant::now();
+    cache.retain(|_, (_, expires_at)| now <= *expires_at);
+    let key = domain.trim_end_matches('.').to_ascii_lowercase();
+
+    if let Some((ips, _)) = cache.get(&key) {
+        let _ = reply.send(Ok(ips.clone()));
+        return;
+    }
+
+    if let Some(waiters) = inflight.get_mut(&key) {
+        waiters.push(reply);
+        return;
+    }
+
     let id = next_dns_id(dns_id_counter);
     let query = match dns::build_query(id, &domain, dns::TYPE_A) {
         Ok(q) => q,
@@ -587,7 +669,8 @@ fn send_dns_query(
     let sock = sockets.get_mut::<udp::Socket>(dns_handle);
     match sock.send_slice(&query, endpoint) {
         Ok(()) => {
-            pending.insert(id, (reply, StdInstant::now() + DNS_TIMEOUT));
+            pending.insert(id, (key.clone(), reply, now + DNS_TIMEOUT));
+            inflight.insert(key, Vec::new());
         }
         Err(err) => {
             let _ = reply.send(Err(anyhow!("DNS send failed: {err:?}")));
@@ -608,6 +691,8 @@ fn drain_dns_responses(
     sockets: &mut SocketSet<'static>,
     dns_handle: SocketHandle,
     pending: &mut PendingDns,
+    inflight: &mut InflightDns,
+    cache: &mut DnsCache,
 ) {
     loop {
         let sock = sockets.get_mut::<udp::Socket>(dns_handle);
@@ -619,22 +704,42 @@ fn drain_dns_responses(
             continue;
         }
         let id = u16::from_be_bytes([payload[0], payload[1]]);
-        let Some((reply, _)) = pending.remove(&id) else {
+        let Some((domain, reply, _)) = pending.remove(&id) else {
             continue;
         };
-        let _ = reply.send(dns::parse_response(&payload, id));
+        let waiters = inflight.remove(&domain).unwrap_or_default();
+        match dns::parse_response(&payload, id) {
+            Ok(ips) => {
+                cache.insert(domain, (ips.clone(), StdInstant::now() + DNS_CACHE_TTL));
+                let _ = reply.send(Ok(ips.clone()));
+                for waiter in waiters {
+                    let _ = waiter.send(Ok(ips.clone()));
+                }
+            }
+            Err(err) => {
+                let message = format!("{err:#}");
+                let _ = reply.send(Err(anyhow!(message.clone())));
+                for waiter in waiters {
+                    let _ = waiter.send(Err(anyhow!(message.clone())));
+                }
+            }
+        }
     }
 }
 
-fn expire_dns(pending: &mut PendingDns) {
+fn expire_dns(pending: &mut PendingDns, inflight: &mut InflightDns) {
     let now = StdInstant::now();
     let expired: Vec<u16> = pending
         .iter()
-        .filter_map(|(id, (_, deadline))| (now > *deadline).then_some(*id))
+        .filter_map(|(id, (_, _, deadline))| (now > *deadline).then_some(*id))
         .collect();
     for id in expired {
-        if let Some((reply, _)) = pending.remove(&id) {
-            let _ = reply.send(Err(anyhow!("DNS query {id:#06x} timed out")));
+        if let Some((domain, reply, _)) = pending.remove(&id) {
+            let message = format!("DNS query {id:#06x} timed out");
+            let _ = reply.send(Err(anyhow!(message.clone())));
+            for waiter in inflight.remove(&domain).unwrap_or_default() {
+                let _ = waiter.send(Err(anyhow!(message.clone())));
+            }
         }
     }
 }

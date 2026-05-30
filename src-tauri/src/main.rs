@@ -2,6 +2,7 @@
 
 mod credentials;
 mod e621;
+mod keychain;
 mod settings;
 mod vpn;
 
@@ -525,14 +526,23 @@ async fn mullvad_sign_in(
         .map_err(|err| report_chain("mullvad_token", err))?;
 
     let existing = vpn::storage::load_mullvad().map_err(|err| report_chain("mullvad_load", err))?;
-    let reusable = match existing {
+
+    if let Some(prev) = &existing
+        && prev.account_number != account
+    {
+        deregister_mullvad_device().await;
+    }
+
+    let reusable = match &existing {
         Some(profile) if profile.account_number == account => {
             match derive_public(&profile.private_key) {
                 Some(public_key) => {
-                    vpn::mullvad::device_exists(&token, &profile.device_id, &public_key)
-                        .await
-                        .unwrap_or(false)
-                        .then_some(profile)
+                    match vpn::mullvad::device_exists(&token, &profile.device_id, &public_key).await
+                    {
+                        Ok(true) => Some(profile.clone()),
+                        Ok(false) => None,
+                        Err(err) => return Err(report_chain("mullvad_device_check", err)),
+                    }
                 }
                 None => None,
             }

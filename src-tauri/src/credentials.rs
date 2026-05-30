@@ -1,13 +1,13 @@
 use anyhow::{Context, Result, anyhow};
-use keyring::{Entry, Error as KeyringError};
+use keyring_core::Error as KeyringError;
 
 use crate::e621::Credentials;
 
 const SERVICE: &str = "com.nyabi.clowder";
 const ACCOUNT: &str = "default";
 
-fn entry() -> Result<Entry> {
-    Entry::new(SERVICE, ACCOUNT).context("open keychain entry")
+fn entry() -> Result<keyring_core::Entry> {
+    crate::keychain::entry(SERVICE, ACCOUNT)
 }
 
 pub fn load() -> Result<Option<Credentials>> {

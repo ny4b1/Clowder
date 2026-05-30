@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use rand::RngCore;
+use rand::RngExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -34,11 +34,11 @@ pub struct SocksHandle {
 
 impl SocksHandle {
     pub fn proxy_url(&self) -> String {
-        format!("socks5://clowder:{}@{}", self.auth_token, self.local_addr)
+        format!("socks5h://clowder:{}@{}", self.auth_token, self.local_addr)
     }
 
     pub fn proxy_display_url(&self) -> String {
-        format!("socks5://clowder:***@{}", self.local_addr)
+        format!("socks5h://clowder:***@{}", self.local_addr)
     }
 
     pub async fn shutdown(mut self) {
@@ -110,7 +110,7 @@ pub async fn start(cmd_tx: mpsc::Sender<EngineCmd>) -> Result<SocksHandle> {
 
 fn random_auth_token() -> String {
     let mut bytes = [0u8; 24];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -386,11 +386,11 @@ mod tests {
         };
         assert_eq!(
             handle.proxy_url(),
-            "socks5://clowder:secret-token@127.0.0.1:12345"
+            "socks5h://clowder:secret-token@127.0.0.1:12345"
         );
         assert_eq!(
             handle.proxy_display_url(),
-            "socks5://clowder:***@127.0.0.1:12345"
+            "socks5h://clowder:***@127.0.0.1:12345"
         );
     }
 }

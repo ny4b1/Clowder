@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use boringtun::x25519::{PublicKey, StaticSecret};
-use rand::rngs::OsRng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 use super::config::{IpCidr, WgConfig, WgInterface, WgPeer};
@@ -112,7 +112,9 @@ pub fn normalize_account(input: &str) -> Result<String> {
 }
 
 pub fn generate_keypair() -> (String, String) {
-    let secret = StaticSecret::random_from_rng(OsRng);
+    let mut private_key = [0u8; 32];
+    rand::rng().fill(&mut private_key);
+    let secret = StaticSecret::from(private_key);
     let public = PublicKey::from(&secret);
     (
         BASE64.encode(secret.to_bytes()),
