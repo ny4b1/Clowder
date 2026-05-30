@@ -42,11 +42,13 @@ your normal connection.
 1. Open **Settings → VPN** and enter your 16-digit Mullvad account number,
    then hit **Sign in**.
 2. Pick a country and city where e621 is reachable from the dropdowns.
-3. Hit **Connect**. The tunnel auto-starts on subsequent launches.
+3. Hit **Connect**. The tunnel auto-starts on subsequent launches and is
+   treated as connected only after the WireGuard handshake completes.
 
 Clowder generates a WireGuard key, registers it as a device on your
 account, and picks a server for you. Mullvad accounts allow up to 5
-devices; **Sign out** removes Clowder's device again.
+devices at the time of writing; **Sign out** removes Clowder's device
+again.
 
 **With any other provider:**
 
@@ -61,7 +63,9 @@ file exported from your provider (Proton, IVPN, a self-hosted peer, …).
 Your account number and private key are stored in your OS keychain
 (Keychain on macOS, Credential Manager on Windows, Secret Service on
 Linux). DNS is resolved inside the tunnel to prevent leaks. Note that
-hostnames are resolved over IPv4 (A records) only.
+hostnames are resolved over IPv4 (A records) only. DNS answers are cached
+briefly inside the app so many simultaneous media requests for the same
+host do not repeat the same lookup.
 
 ## Usage
 
@@ -103,7 +107,7 @@ Auto-updates require a one-time setup:
 
 After that, cutting a release is just:
 ```sh
-git tag v0.5.0 && git push --tags
+git tag vX.Y.Z && git push --tags
 ```
 The workflow builds for all three platforms, signs the artifacts,
 publishes a GitHub Release, and writes the `latest.json` that
