@@ -383,6 +383,7 @@
 
   {#if showSettings}
     <SettingsDialog
+      site={appStore.activeSite}
       username={appStore.account.username}
       initialSection={settingsSection}
       {usernameInput}

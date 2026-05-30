@@ -322,7 +322,7 @@
   <div class="space-y-1.5 border-t border-room-line pt-4">
     <p class="font-mono text-[10.5px] leading-relaxed text-room-text-low">
       Only this app's traffic goes through the tunnel. Enter your Mullvad
-      account number and pick a server in a country where e621 is reachable.
+      account number and pick a server in a country where the sites are reachable.
     </p>
     <p class="font-mono text-[10px] leading-relaxed text-room-fav/90">
       Don't keep a system-wide VPN (e.g. the Mullvad app) connected at the same

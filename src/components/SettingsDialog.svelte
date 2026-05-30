@@ -10,9 +10,11 @@
   import VpnSection from "./settings/VpnSection.svelte";
   import { errMsg } from "../lib/errors";
   import { settingsStore } from "../lib/settings-store.svelte";
+  import type { Site } from "../lib/site";
   import type { Settings, SettingsSection } from "../lib/types";
 
   type Props = {
+    site: Site;
     username: string | null;
     initialSection?: SettingsSection;
     usernameInput: string;
@@ -28,6 +30,7 @@
   };
 
   let {
+    site,
     username,
     initialSection = "account",
     usernameInput,
@@ -171,6 +174,7 @@
         <div class="min-h-0 overflow-auto">
           {#if activeSection === "account"}
             <AccountSection
+              {site}
               {username}
               {usernameInput}
               {apiKeyInput}

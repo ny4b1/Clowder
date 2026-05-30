@@ -1,7 +1,9 @@
 <script lang="ts">
   import Spinner from "../icons/Spinner.svelte";
+  import { siteLabels, type Site } from "../../lib/site";
 
   type Props = {
+    site: Site;
     username: string | null;
     usernameInput: string;
     apiKeyInput: string;
@@ -14,6 +16,7 @@
   };
 
   let {
+    site,
     username,
     usernameInput,
     apiKeyInput,
@@ -58,7 +61,8 @@
       />
     </label>
     <p class="font-mono text-[10px] leading-relaxed text-room-text-low">
-      generate at e621.net/users/home → manage api access. stored in the system keychain.
+      {siteLabels[site]} account · generate at {site}.net/users/home → manage api access. stored in
+      the system keychain.
     </p>
     {#if accountStatus}
       <p
