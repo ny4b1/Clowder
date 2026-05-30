@@ -2,22 +2,22 @@ use anyhow::{Context, Result, anyhow};
 use keyring_core::Error as KeyringError;
 
 use crate::e621::Credentials;
+use crate::site::Site;
 
 const SERVICE: &str = "com.nyabi.clowder";
-const ACCOUNT: &str = "default";
 
-fn entry() -> Result<keyring_core::Entry> {
-    crate::keychain::entry(SERVICE, ACCOUNT)
+fn entry(site: Site) -> Result<keyring_core::Entry> {
+    crate::keychain::entry(SERVICE, site.keychain_account())
 }
 
-pub async fn load() -> Result<Option<Credentials>> {
-    tokio::task::spawn_blocking(load_blocking)
+pub async fn load(site: Site) -> Result<Option<Credentials>> {
+    tokio::task::spawn_blocking(move || load_blocking(site))
         .await
         .context("join credentials load task")?
 }
 
-fn load_blocking() -> Result<Option<Credentials>> {
-    let entry = entry()?;
+fn load_blocking(site: Site) -> Result<Option<Credentials>> {
+    let entry = entry(site)?;
     match entry.get_password() {
         Ok(payload) => {
             let creds: Credentials =
@@ -29,28 +29,28 @@ fn load_blocking() -> Result<Option<Credentials>> {
     }
 }
 
-pub async fn save(creds: &Credentials) -> Result<()> {
+pub async fn save(site: Site, creds: &Credentials) -> Result<()> {
     let creds = creds.clone();
-    tokio::task::spawn_blocking(move || save_blocking(&creds))
+    tokio::task::spawn_blocking(move || save_blocking(site, &creds))
         .await
         .context("join credentials save task")?
 }
 
-fn save_blocking(creds: &Credentials) -> Result<()> {
+fn save_blocking(site: Site, creds: &Credentials) -> Result<()> {
     let payload = serde_json::to_string(creds).context("encode credentials")?;
-    entry()?
+    entry(site)?
         .set_password(&payload)
         .map_err(|err| anyhow!("write keychain entry: {err}"))
 }
 
-pub async fn clear() -> Result<()> {
-    tokio::task::spawn_blocking(clear_blocking)
+pub async fn clear(site: Site) -> Result<()> {
+    tokio::task::spawn_blocking(move || clear_blocking(site))
         .await
         .context("join credentials clear task")?
 }
 
-fn clear_blocking() -> Result<()> {
-    let entry = entry()?;
+fn clear_blocking(site: Site) -> Result<()> {
+    let entry = entry(site)?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(KeyringError::NoEntry) => Ok(()),

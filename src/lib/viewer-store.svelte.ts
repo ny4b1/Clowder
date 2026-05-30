@@ -1,5 +1,6 @@
 import { createComment, fetchComments, hideComment, mediaUrl, originalUrl } from "./e621";
 import { errMsg } from "./errors";
+import type { Site } from "./site";
 import type { CommentState, OriginalViewer, Post } from "./types";
 
 const emptyComments: CommentState = {
@@ -12,11 +13,16 @@ const emptyComments: CommentState = {
   hiding: {},
 };
 
-class ViewerStore {
+export class ViewerStore {
+  readonly site: Site;
   viewer = $state<OriginalViewer | null>(null);
   imageOnly = $state(false);
   comments = $state<CommentState>({ ...emptyComments });
   private openGeneration = 0;
+
+  constructor(site: Site) {
+    this.site = site;
+  }
 
   async open(post: Post, historyMode: "push" | "replace" | "skip" = "push") {
     const generation = ++this.openGeneration;
@@ -82,7 +88,7 @@ class ViewerStore {
   async loadComments(postId: number) {
     this.comments = { ...this.comments, loading: true, error: null };
     try {
-      const items = await fetchComments(postId);
+      const items = await fetchComments(this.site, postId);
       if (this.viewer?.post.id === postId) {
         this.comments = { ...this.comments, items, loading: false, error: null };
       }
@@ -104,7 +110,7 @@ class ViewerStore {
     this.comments = { ...this.comments, submitting: true, submitError: null };
 
     try {
-      const created = await createComment(post.id, body);
+      const created = await createComment(this.site, post.id, body);
       if (this.viewer?.post.id !== post.id) return null;
       const nextCount = (this.viewer.post.comment_count ?? this.comments.items.length) + 1;
       this.viewer = {
@@ -133,7 +139,7 @@ class ViewerStore {
       hiding: { ...this.comments.hiding, [commentId]: true },
     };
     try {
-      const hidden = await hideComment(commentId);
+      const hidden = await hideComment(this.site, commentId);
       this.comments = {
         ...this.comments,
         items: this.comments.items.map((comment) =>
@@ -150,5 +156,3 @@ class ViewerStore {
     }
   }
 }
-
-export const viewerStore = new ViewerStore();

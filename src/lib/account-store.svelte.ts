@@ -1,14 +1,20 @@
 import { getAccount, signIn as signInApi, signOutAccount } from "./e621";
 import { errMsg } from "./errors";
+import type { Site } from "./site";
 
-class AccountStore {
+export class AccountStore {
+  readonly site: Site;
   username = $state<string | null>(null);
   saving = $state(false);
   status = $state("");
 
+  constructor(site: Site) {
+    this.site = site;
+  }
+
   async load() {
     try {
-      const result = await getAccount();
+      const result = await getAccount(this.site);
       this.username = result.username;
     } catch {
       this.username = null;
@@ -19,7 +25,7 @@ class AccountStore {
     this.saving = true;
     this.status = "verifying";
     try {
-      const result = await signInApi(username, apiKey);
+      const result = await signInApi(this.site, username, apiKey);
       this.username = result.username;
       this.status = "";
       return true;
@@ -40,7 +46,7 @@ class AccountStore {
     this.saving = true;
     this.status = "";
     try {
-      await signOutAccount();
+      await signOutAccount(this.site);
       this.username = null;
       return true;
     } catch (error) {
@@ -51,5 +57,3 @@ class AccountStore {
     }
   }
 }
-
-export const accountStore = new AccountStore();

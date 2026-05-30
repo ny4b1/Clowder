@@ -11,8 +11,10 @@
     tagAutocompleteTarget,
   } from "../lib/search";
   import { searchHistoryStore } from "../lib/search-history-store.svelte";
+  import { SITES, siteLabels, type Site } from "../lib/site";
 
   type Props = {
+    site: Site;
     query: string;
     status: string;
     loading: boolean;
@@ -20,6 +22,7 @@
     hasSearched: boolean;
     page: number;
     hasNextPage: boolean;
+    onSwitchSite: (site: Site) => void;
     onQueryChange: (query: string) => void;
     onSearch: () => void;
     onOpenAccount: () => void;
@@ -28,6 +31,7 @@
   };
 
   let {
+    site,
     query,
     status,
     loading,
@@ -35,6 +39,7 @@
     hasSearched,
     page,
     hasNextPage,
+    onSwitchSite,
     onQueryChange,
     onSearch,
     onOpenAccount,
@@ -65,7 +70,7 @@
       return;
     }
 
-    const target = tagAutocompleteTarget(token.raw);
+    const target = tagAutocompleteTarget(token.raw, site);
     if (
       !target ||
       (!target.qualified && target.term.length < 2) ||
@@ -89,7 +94,7 @@
     requestId: number,
   ) {
     try {
-      const result = await fetchTagSuggestions(term, category);
+      const result = await fetchTagSuggestions(site, term, category);
       if (requestId !== autocompleteRequestId) return;
       suggestions = result.map((suggestion) => ({
         ...suggestion,
@@ -155,13 +160,30 @@
 </script>
 
 <header class="flex items-center gap-4 border-b border-room-line px-4">
-  <div class="flex shrink-0 select-none items-baseline gap-2">
+  <div class="flex shrink-0 select-none items-center gap-3">
     <span class="font-mono text-[15px] font-medium leading-none tracking-tight text-room-text">
       Clowder
     </span>
-    <span class="font-mono text-[10px] uppercase leading-none tracking-[0.22em] text-room-text-low">
-      browser
-    </span>
+    <div
+      class="flex items-center rounded-[3px] border border-room-line bg-room-panel p-0.5"
+      role="tablist"
+      aria-label="Site"
+    >
+      {#each SITES as option (option)}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={site === option}
+          onclick={() => onSwitchSite(option)}
+          class="rounded-[2px] px-2 py-1 font-mono text-[10.5px] uppercase tracking-[0.16em] transition-colors duration-150 {site ===
+          option
+            ? 'bg-room-panel-hi text-room-accent'
+            : 'text-room-text-low hover:text-room-text-mid'}"
+        >
+          {siteLabels[option]}
+        </button>
+      {/each}
+    </div>
   </div>
 
   <div class="h-5 w-px bg-room-line"></div>
@@ -231,7 +253,7 @@
           >
             <span class="truncate">{suggestion.name}</span>
             <span class="font-mono text-[10px] tabular-nums text-room-text-low">
-              <span class="text-room-text-mid">{categoryLabel(suggestion.category)}</span>
+              <span class="text-room-text-mid">{categoryLabel(suggestion.category, site)}</span>
               {#if suggestion.post_count > 0}
                 <span class="px-1 text-room-line-strong">·</span>
                 {suggestion.post_count.toLocaleString()}

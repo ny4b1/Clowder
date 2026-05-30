@@ -93,7 +93,13 @@ pub struct PostTags {
     #[serde(default)]
     pub artist: Vec<String>,
     #[serde(default)]
+    pub director: Vec<String>,
+    #[serde(default)]
+    pub contributor: Vec<String>,
+    #[serde(default)]
     pub copyright: Vec<String>,
+    #[serde(default)]
+    pub franchise: Vec<String>,
     #[serde(default)]
     pub character: Vec<String>,
     #[serde(default)]

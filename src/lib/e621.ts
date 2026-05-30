@@ -1,52 +1,58 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Site } from "./site";
 import type { AccountResponse, Comment, Post, SearchResponse, TagSuggestion } from "./types";
 
-export function searchPosts(tags: string, page: number, limit: number) {
-  return invoke<SearchResponse>("search_posts", { tags, page, limit });
+export function searchPosts(site: Site, tags: string, page: number, limit: number) {
+  return invoke<SearchResponse>("search_posts", { site, tags, page, limit });
 }
 
 export function mediaUrl(url: string) {
   return invoke<string>("media_url", { url });
 }
 
-export function fetchTagSuggestions(term: string, category: number | null = null) {
-  return invoke<TagSuggestion[]>("autocomplete_tags", { term, category });
+export function fetchTagSuggestions(site: Site, term: string, category: number | null = null) {
+  return invoke<TagSuggestion[]>("autocomplete_tags", { site, term, category });
 }
 
-export function getAccount() {
-  return invoke<AccountResponse>("get_account");
+export function getAccount(site: Site) {
+  return invoke<AccountResponse>("get_account", { site });
 }
 
-export function signIn(username: string, apiKey: string) {
-  return invoke<AccountResponse>("sign_in", { username, apiKey });
+export function signIn(site: Site, username: string, apiKey: string) {
+  return invoke<AccountResponse>("sign_in", { site, username, apiKey });
 }
 
-export function signOutAccount() {
-  return invoke("sign_out");
+export function signOutAccount(site: Site) {
+  return invoke("sign_out", { site });
 }
 
-export function favoritePost(postId: number) {
-  return invoke("favorite_post", { postId });
+export function favoritePost(site: Site, postId: number) {
+  return invoke("favorite_post", { site, postId });
 }
 
-export function unfavoritePost(postId: number) {
-  return invoke("unfavorite_post", { postId });
+export function unfavoritePost(site: Site, postId: number) {
+  return invoke("unfavorite_post", { site, postId });
 }
 
-export function fetchComments(postId: number, limit = 40) {
-  return invoke<Comment[]>("fetch_comments", { postId, limit });
+export function fetchComments(site: Site, postId: number, limit = 40) {
+  return invoke<Comment[]>("fetch_comments", { site, postId, limit });
 }
 
-export function createComment(postId: number, body: string) {
-  return invoke<Comment>("create_comment", { postId, body });
+export function createComment(site: Site, postId: number, body: string) {
+  return invoke<Comment>("create_comment", { site, postId, body });
 }
 
-export function hideComment(commentId: number) {
-  return invoke<Comment>("hide_comment", { commentId });
+export function hideComment(site: Site, commentId: number) {
+  return invoke<Comment>("hide_comment", { site, commentId });
 }
 
-export function updatePostTags(postId: number, tagStringDiff: string, editReason: string) {
-  return invoke<Post>("update_post_tags", { postId, tagStringDiff, editReason });
+export function updatePostTags(
+  site: Site,
+  postId: number,
+  tagStringDiff: string,
+  editReason: string,
+) {
+  return invoke<Post>("update_post_tags", { site, postId, tagStringDiff, editReason });
 }
 
 export function downloadFile(url: string, filename: string) {

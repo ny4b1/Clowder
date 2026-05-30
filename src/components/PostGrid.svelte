@@ -3,9 +3,11 @@
   import Spinner from "./icons/Spinner.svelte";
   import type { Post } from "../lib/types";
   import { compact, postLabel, scoreTotal } from "../lib/search";
+  import { siteLabels, type Site } from "../lib/site";
 
   type Props = {
     posts: Post[];
+    site: Site;
     loading: boolean;
     hasSearched: boolean;
     selectedId: number | null;
@@ -19,6 +21,7 @@
 
   let {
     posts,
+    site,
     loading,
     hasSearched,
     selectedId,
@@ -148,7 +151,7 @@
             empty workspace
           </div>
           <h2 class="text-[20px] font-light leading-tight tracking-tight text-room-text">
-            Search e621 posts
+            Search {siteLabels[site]} posts
           </h2>
           <p class="mt-2 text-[13px] leading-relaxed text-room-text-mid">
             Type tags above. Use arrow keys for autocomplete, Tab or Enter to insert.
@@ -181,7 +184,7 @@
               <img
                 class="absolute inset-0 h-full w-full object-cover"
                 src={previews[post.id]}
-                alt={postLabel(post)}
+                alt={postLabel(post, site)}
                 draggable="false"
                 onerror={() => onPreviewError(post.id)}
               />
@@ -201,7 +204,7 @@
                 #{post.id}
               </span>
               <span class="truncate text-[11.5px] text-room-text">
-                {postLabel(post)}
+                {postLabel(post, site)}
               </span>
             </div>
             <div class="mt-0.5 flex items-center gap-2.5 font-mono text-[10px] tabular-nums">

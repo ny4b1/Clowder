@@ -3,16 +3,18 @@
   import TagGroup from "./TagGroup.svelte";
   import type { Post } from "../lib/types";
   import { dimsLabel, postLabel, tagGroups } from "../lib/search";
+  import type { Site } from "../lib/site";
 
   type Props = {
     selectedPost: Post | null;
+    site: Site;
     username: string | null;
     favoritePending: Record<number, boolean>;
     onOpenOriginal: (post: Post) => void;
     onToggleFavorite: (post: Post) => void;
   };
 
-  let { selectedPost, username, favoritePending, onOpenOriginal, onToggleFavorite }: Props =
+  let { selectedPost, site, username, favoritePending, onOpenOriginal, onToggleFavorite }: Props =
     $props();
 </script>
 
@@ -27,7 +29,7 @@
           #{selectedPost.id}
         </div>
         <div class="mt-0.5 truncate text-[12.5px] text-room-text-mid">
-          {postLabel(selectedPost)}
+          {postLabel(selectedPost, site)}
         </div>
         <div class="mt-3 flex items-center gap-4 font-mono text-[11px] tabular-nums">
           <div class="flex items-center gap-1.5 text-room-text">
@@ -111,7 +113,7 @@
         {/if}
       </section>
 
-      {#each tagGroups(selectedPost) as [group, tags] (group)}
+      {#each tagGroups(selectedPost, site) as [group, tags] (group)}
         <TagGroup {group} {tags} maxVisible={32} />
       {/each}
     </div>

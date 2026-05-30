@@ -4,12 +4,16 @@ mod credentials;
 mod e621;
 mod keychain;
 mod settings;
+mod site;
 mod vpn;
 
+use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+
+use site::Site;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use e621::{Client, Comment, Credentials, MAX_DOWNLOAD_BYTES, Post, SESSION_EXPIRED, Tag};
@@ -25,16 +29,11 @@ use tauri::http::{
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
-const ALLOWED_MEDIA_HOSTS: &[&str] = &[
-    "e621.net",
-    "static1.e621.net",
-    "static2.e621.net",
-    "e926.net",
-    "static1.e926.net",
-    "static2.e926.net",
-];
-
 fn validate_remote_url(raw: &str) -> Result<url::Url, String> {
+    site_for_url(raw).map(|(parsed, _)| parsed)
+}
+
+fn site_for_url(raw: &str) -> Result<(url::Url, Site), String> {
     let parsed = url::Url::parse(raw).map_err(|err| format!("invalid URL: {err}"))?;
     if parsed.scheme() != "https" {
         return Err(format!(
@@ -45,10 +44,8 @@ fn validate_remote_url(raw: &str) -> Result<url::Url, String> {
     let host = parsed
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?;
-    if !ALLOWED_MEDIA_HOSTS.contains(&host) {
-        return Err(format!("disallowed media host: {host}"));
-    }
-    Ok(parsed)
+    let site = Site::from_media_host(host).ok_or_else(|| format!("disallowed media host: {host}"))?;
+    Ok((parsed, site))
 }
 
 const USER_ACTIONABLE_PATTERNS: &[&str] = &[
@@ -87,6 +84,7 @@ fn is_transport_error(chain: &str) -> bool {
 
 fn finish<T>(
     app: &tauri::AppHandle,
+    site: Site,
     vpn_live: bool,
     operation: &'static str,
     fallback: &'static str,
@@ -98,13 +96,13 @@ fn finish<T>(
     };
     let chain = format!("{err:#}");
     if chain.contains(SESSION_EXPIRED) {
-        tauri::async_runtime::spawn(async {
-            if let Err(clear_err) = credentials::clear().await {
+        tauri::async_runtime::spawn(async move {
+            if let Err(clear_err) = credentials::clear(site).await {
                 tracing::warn!(error = %format!("{clear_err:#}"), "clear credentials on session expiry failed");
             }
         });
-        let _ = app.emit("auth-expired", ());
-        tracing::info!(operation, "e621 session expired; signed out");
+        let _ = app.emit("auth-expired", site);
+        tracing::info!(operation, "session expired; signed out");
         return Err(SESSION_EXPIRED.to_string());
     }
     if vpn_live && is_transport_error(&chain) {
@@ -119,7 +117,7 @@ async fn vpn_live(state: &State<'_, Arc<AppState>>) -> bool {
 }
 
 struct AppState {
-    client: Mutex<Option<Client>>,
+    clients: Mutex<HashMap<Site, Client>>,
     settings: RwLock<Settings>,
     vpn: Mutex<Option<vpn::VpnHandle>>,
     mullvad_relays: Mutex<Option<vpn::mullvad::RelayList>>,
@@ -128,7 +126,7 @@ struct AppState {
 impl AppState {
     fn new(settings: Settings) -> Self {
         Self {
-            client: Mutex::new(None),
+            clients: Mutex::new(HashMap::new()),
             settings: RwLock::new(settings),
             vpn: Mutex::new(None),
             mullvad_relays: Mutex::new(None),
@@ -174,15 +172,17 @@ struct AccountResponse {
 
 #[tauri::command]
 async fn autocomplete_tags(
+    site: Site,
     term: String,
     category: Option<u8>,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Tag>, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "autocomplete_tags",
         "Tag autocomplete failed.",
@@ -192,16 +192,18 @@ async fn autocomplete_tags(
 
 #[tauri::command]
 async fn search_posts(
+    site: Site,
     tags: String,
     page: u32,
     limit: u32,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SearchResponse, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     let outcome = finish(
         &app,
+        site,
         live,
         "search_posts",
         "Search failed. Please try again.",
@@ -229,8 +231,8 @@ async fn download_file(
     filename: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
-    let parsed = validate_remote_url(&url)?;
-    let client = get_client(&state).await?;
+    let (parsed, site) = site_for_url(&url)?;
+    let client = get_client(&state, site).await?;
     let custom_dir = state
         .settings
         .read()
@@ -251,8 +253,11 @@ async fn download_file(
 }
 
 #[tauri::command]
-async fn get_account(state: State<'_, Arc<AppState>>) -> Result<AccountResponse, String> {
-    let client = get_client(&state).await?;
+async fn get_account(
+    site: Site,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AccountResponse, String> {
+    let client = get_client(&state, site).await?;
     Ok(AccountResponse {
         username: client.current_username(),
     })
@@ -260,6 +265,7 @@ async fn get_account(state: State<'_, Arc<AppState>>) -> Result<AccountResponse,
 
 #[tauri::command]
 async fn sign_in(
+    site: Site,
     username: String,
     api_key: String,
     app: tauri::AppHandle,
@@ -272,17 +278,18 @@ async fn sign_in(
     }
 
     let creds = Credentials { username, api_key };
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "sign_in",
         "Sign in failed.",
         client.validate(&creds).await,
     )?;
 
-    credentials::save(&creds)
+    credentials::save(site, &creds)
         .await
         .map_err(|err| report("credentials_save", "Could not save credentials.", err))?;
     client.set_credentials(Some(creds.clone()));
@@ -293,25 +300,27 @@ async fn sign_in(
 }
 
 #[tauri::command]
-async fn sign_out(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    credentials::clear()
+async fn sign_out(site: Site, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    credentials::clear(site)
         .await
         .map_err(|err| report("credentials_clear", "Could not clear credentials.", err))?;
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     client.set_credentials(None);
     Ok(())
 }
 
 #[tauri::command]
 async fn favorite_post(
+    site: Site,
     post_id: u64,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<bool, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "favorite_post",
         "Favorite failed.",
@@ -322,14 +331,16 @@ async fn favorite_post(
 
 #[tauri::command]
 async fn unfavorite_post(
+    site: Site,
     post_id: u64,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<bool, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "unfavorite_post",
         "Unfavorite failed.",
@@ -340,15 +351,17 @@ async fn unfavorite_post(
 
 #[tauri::command]
 async fn fetch_comments(
+    site: Site,
     post_id: u64,
     limit: u32,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Comment>, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "fetch_comments",
         "Could not load comments.",
@@ -358,15 +371,17 @@ async fn fetch_comments(
 
 #[tauri::command]
 async fn create_comment(
+    site: Site,
     post_id: u64,
     body: String,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Comment, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "create_comment",
         "Failed to post comment.",
@@ -376,16 +391,18 @@ async fn create_comment(
 
 #[tauri::command]
 async fn update_post_tags(
+    site: Site,
     post_id: u64,
     tag_string_diff: String,
     edit_reason: String,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Post, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "update_post_tags",
         "Failed to update tags.",
@@ -397,14 +414,16 @@ async fn update_post_tags(
 
 #[tauri::command]
 async fn hide_comment(
+    site: Site,
     comment_id: u64,
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Comment, String> {
-    let client = get_client(&state).await?;
+    let client = get_client(&state, site).await?;
     let live = vpn_live(&state).await;
     finish(
         &app,
+        site,
         live,
         "hide_comment",
         "Failed to hide comment.",
@@ -479,7 +498,7 @@ async fn swap_tunnel(state: &State<'_, Arc<AppState>>, cfg: vpn::WgConfig) -> Re
         .await
         .map_err(|err| report_chain("vpn_start", err))?;
     *state.vpn.lock().await = Some(handle);
-    *state.client.lock().await = None;
+    state.clients.lock().await.clear();
     Ok(())
 }
 
@@ -488,7 +507,7 @@ async fn stop_tunnel(state: &State<'_, Arc<AppState>>) {
     if let Some(prev) = prev {
         prev.shutdown().await;
     }
-    *state.client.lock().await = None;
+    state.clients.lock().await.clear();
 }
 
 #[tauri::command]
@@ -784,31 +803,31 @@ fn report_chain(operation: &'static str, err: anyhow::Error) -> String {
     chain
 }
 
-async fn get_client(state: &State<'_, Arc<AppState>>) -> Result<Client, String> {
-    get_client_inner(state.inner()).await
+async fn get_client(state: &State<'_, Arc<AppState>>, site: Site) -> Result<Client, String> {
+    get_client_inner(state.inner(), site).await
 }
 
-async fn get_client_inner(state: &Arc<AppState>) -> Result<Client, String> {
+async fn get_client_inner(state: &Arc<AppState>, site: Site) -> Result<Client, String> {
     let proxy_url = {
         let vpn_guard = state.vpn.lock().await;
         vpn_guard.as_ref().and_then(|h| h.proxy_url())
     };
-    let mut guard = state.client.lock().await;
-    if let Some(client) = guard.as_ref() {
+    let mut guard = state.clients.lock().await;
+    if let Some(client) = guard.get(&site) {
         return Ok(client.clone());
     }
 
-    let client = Client::new(proxy_url.as_deref())
+    let client = Client::new(site, proxy_url.as_deref())
         .await
         .map_err(|err| report("client_init", "Could not initialize HTTP client.", err))?;
 
-    match credentials::load().await {
+    match credentials::load(site).await {
         Ok(Some(creds)) => client.set_credentials(Some(creds)),
         Ok(None) => {}
         Err(err) => tracing::warn!(error = %format!("{err:#}"), "could not load saved credentials"),
     }
 
-    *guard = Some(client.clone());
+    guard.insert(site, client.clone());
     Ok(client)
 }
 
@@ -832,7 +851,7 @@ async fn fetch_media_response(
         .map_err(|err| anyhow::anyhow!("decode media token: {err}"))?;
     let url =
         String::from_utf8(decoded).map_err(|err| anyhow::anyhow!("decode media URL: {err}"))?;
-    let parsed = validate_remote_url(&url).map_err(|err| anyhow::anyhow!(err))?;
+    let (parsed, site) = site_for_url(&url).map_err(|err| anyhow::anyhow!(err))?;
     let url = parsed.as_str().to_string();
     let max_chunk = state
         .settings
@@ -847,7 +866,7 @@ async fn fetch_media_response(
         .and_then(|range| media_range(&url, range, max_chunk));
     let range = requested_range.or_else(|| initial_media_range(&url, max_chunk));
 
-    let client = get_client_inner(&state)
+    let client = get_client_inner(&state, site)
         .await
         .map_err(|err| anyhow::anyhow!(err))?;
     let media = client
@@ -1280,7 +1299,7 @@ fn main() {
                         Ok(Some(cfg)) => match vpn::VpnHandle::start(cfg).await {
                             Ok(handle) => {
                                 *app_state.vpn.lock().await = Some(handle);
-                                *app_state.client.lock().await = None;
+                                app_state.clients.lock().await.clear();
                                 tracing::info!("vpn auto-started");
                             }
                             Err(err) => {

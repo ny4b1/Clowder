@@ -1,11 +1,21 @@
 import { favoritePost, unfavoritePost, updatePostTags } from "./e621";
 import { errMsg } from "./errors";
-import { searchStore } from "./search-store.svelte";
-import { viewerStore } from "./viewer-store.svelte";
+import type { SearchStore } from "./search-store.svelte";
+import type { Site } from "./site";
+import type { ViewerStore } from "./viewer-store.svelte";
 import type { Post } from "./types";
 
-class PostActionsStore {
+export class PostActionsStore {
+  readonly site: Site;
+  private readonly search: SearchStore;
+  private readonly viewer: ViewerStore;
   favoritePending = $state<Record<number, boolean>>({});
+
+  constructor(site: Site, search: SearchStore, viewer: ViewerStore) {
+    this.site = site;
+    this.search = search;
+    this.viewer = viewer;
+  }
 
   isFavoritePending(id: number): boolean {
     return !!this.favoritePending[id];
@@ -19,16 +29,16 @@ class PostActionsStore {
 
     try {
       if (wasFavorited) {
-        await unfavoritePost(post.id);
+        await unfavoritePost(this.site, post.id);
       } else {
-        await favoritePost(post.id);
+        await favoritePost(this.site, post.id);
       }
       const patch: Partial<Post> = {
         is_favorited: !wasFavorited,
         fav_count: Math.max(0, (post.fav_count ?? 0) + (wasFavorited ? -1 : 1)),
       };
-      searchStore.updatePost(post.id, patch);
-      viewerStore.updateViewerPost(post.id, patch);
+      this.search.updatePost(post.id, patch);
+      this.viewer.updateViewerPost(post.id, patch);
       return null;
     } catch (error) {
       return errMsg(error);
@@ -38,10 +48,8 @@ class PostActionsStore {
   }
 
   async updateTags(post: Post, tagStringDiff: string, editReason: string): Promise<void> {
-    const updated = await updatePostTags(post.id, tagStringDiff, editReason);
-    searchStore.replacePost(updated);
-    viewerStore.replaceViewerPost(updated);
+    const updated = await updatePostTags(this.site, post.id, tagStringDiff, editReason);
+    this.search.replacePost(updated);
+    this.viewer.replaceViewerPost(updated);
   }
 }
-
-export const postActionsStore = new PostActionsStore();

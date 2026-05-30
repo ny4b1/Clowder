@@ -1,3 +1,4 @@
+import { DEFAULT_SITE, type Site, primaryCreatorKey, tagTaxonomy } from "./site";
 import type { Post, SortMode, TagSuggestion } from "./types";
 
 export function currentToken(value: string) {
@@ -19,18 +20,15 @@ export function looksLikeMetatag(value: string) {
   );
 }
 
-const tagCategoryPrefixes: Record<string, number> = {
-  general: 0,
-  artist: 1,
-  copyright: 3,
-  character: 4,
-  species: 5,
-  invalid: 6,
-  meta: 7,
-  lore: 8,
-};
+function tagCategoryPrefixes(site: Site): Record<string, number> {
+  const prefixes: Record<string, number> = { invalid: 6 };
+  for (const def of tagTaxonomy[site]) {
+    prefixes[def.label] = def.category;
+  }
+  return prefixes;
+}
 
-export function tagAutocompleteTarget(raw: string) {
+export function tagAutocompleteTarget(raw: string, site: Site = DEFAULT_SITE) {
   const value = raw.replace(/^-/, "");
   const match = /^([a-z_]+):(.*)$/i.exec(value);
   if (!match) {
@@ -43,7 +41,7 @@ export function tagAutocompleteTarget(raw: string) {
   }
 
   const prefix = match[1].toLowerCase();
-  const category = tagCategoryPrefixes[prefix];
+  const category = tagCategoryPrefixes(site)[prefix];
   if (category === undefined) {
     return null;
   }
@@ -88,25 +86,10 @@ export function applySuggestionToQuery(query: string, suggestion: TagSuggestion)
   return `${query.slice(0, token.start)}${prefix}${suggestion.insert ?? suggestion.name} ${query.slice(token.end)}`;
 }
 
-export function categoryLabel(category: number) {
-  switch (category) {
-    case 1:
-      return "artist";
-    case 3:
-      return "copyright";
-    case 4:
-      return "character";
-    case 5:
-      return "species";
-    case 6:
-      return "invalid";
-    case 7:
-      return "meta";
-    case 8:
-      return "lore";
-    default:
-      return "general";
-  }
+export function categoryLabel(category: number, site: Site = DEFAULT_SITE) {
+  if (category === 6) return "invalid";
+  const def = tagTaxonomy[site].find((entry) => entry.category === category);
+  return def?.label ?? "general";
 }
 
 export function queryWithSort(value: string, mode: SortMode) {
@@ -129,12 +112,12 @@ export function sortModeFromQuery(value: string): SortMode {
   return /\border:(score|favcount)\b/i.test(value) ? "popular" : "latest";
 }
 
-export function postLabel(post: Post) {
-  const artists = post.tags?.artist ?? [];
-  if (artists.length === 0) return "unknown";
-  if (artists.length === 1) return artists[0];
-  if (artists.length === 2) return `${artists[0]} + ${artists[1]}`;
-  return `${artists[0]} (+${artists.length - 1})`;
+export function postLabel(post: Post, site: Site = DEFAULT_SITE) {
+  const creators = post.tags?.[primaryCreatorKey(site)] ?? [];
+  if (creators.length === 0) return "unknown";
+  if (creators.length === 1) return creators[0];
+  if (creators.length === 2) return `${creators[0]} + ${creators[1]}`;
+  return `${creators[0]} (+${creators.length - 1})`;
 }
 
 export function dimsLabel(post: Post) {
@@ -155,14 +138,8 @@ export function scoreTotal(post: Post) {
   return post.score?.total ?? 0;
 }
 
-export function tagGroups(post: Post) {
-  return [
-    ["artist", post.tags?.artist ?? []],
-    ["copyright", post.tags?.copyright ?? []],
-    ["character", post.tags?.character ?? []],
-    ["species", post.tags?.species ?? []],
-    ["general", post.tags?.general ?? []],
-    ["meta", post.tags?.meta ?? []],
-    ["lore", post.tags?.lore ?? []],
-  ] as const;
+export function tagGroups(post: Post, site: Site = DEFAULT_SITE) {
+  return tagTaxonomy[site].map(
+    (def) => [def.label, post.tags?.[def.key] ?? []] as [string, string[]],
+  );
 }

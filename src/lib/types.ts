@@ -11,7 +11,10 @@ export type PostImage = {
 
 export type PostTags = {
   artist?: string[];
+  director?: string[];
+  contributor?: string[];
   copyright?: string[];
+  franchise?: string[];
   character?: string[];
   species?: string[];
   general?: string[];

@@ -4,16 +4,18 @@
   import type { Post } from "../lib/types";
   import { errMsg } from "../lib/errors";
   import { postLabel, tagGroups } from "../lib/search";
+  import type { Site } from "../lib/site";
 
   type Props = {
     post: Post;
+    site: Site;
     username: string | null;
     onSearchTag: (tag: string) => void;
     onOpenAccount: () => void;
     onUpdateTags: (post: Post, tagStringDiff: string, editReason: string) => Promise<void>;
   };
 
-  let { post, username, onSearchTag, onOpenAccount, onUpdateTags }: Props = $props();
+  let { post, site, username, onSearchTag, onOpenAccount, onUpdateTags }: Props = $props();
 
   let tagEditorOpen = $state(false);
   let tagStringDiff = $state("");
@@ -60,7 +62,7 @@
       #{post.id}
     </div>
     <div class="mt-0.5 truncate text-[12px] text-room-text-mid">
-      {postLabel(post)}
+      {postLabel(post, site)}
     </div>
     <div class="mt-3">
       {#if username}
@@ -139,7 +141,7 @@
     {/if}
   </section>
 
-  {#each tagGroups(post) as [group, tags] (group)}
+  {#each tagGroups(post, site) as [group, tags] (group)}
     <TagGroup {group} {tags} padding="tight" onTagClick={onSearchTag} />
   {/each}
 </aside>

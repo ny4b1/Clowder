@@ -11,10 +11,12 @@
   import { playbackMemory } from "../lib/playback.svelte";
   import { dimsLabel, postLabel } from "../lib/search";
   import { settingsStore } from "../lib/settings-store.svelte";
+  import type { Site } from "../lib/site";
   import { setWindowFullscreen } from "../lib/window";
 
   type Props = {
     viewer: OriginalViewerState;
+    site: Site;
     imageOnly: boolean;
     username: string | null;
     favoritePending: boolean;
@@ -36,6 +38,7 @@
 
   let {
     viewer,
+    site,
     imageOnly,
     username,
     favoritePending,
@@ -341,7 +344,7 @@
       <img
         class="absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] object-contain"
         src={viewer.dataUrl}
-        alt={postLabel(viewer.post)}
+        alt={postLabel(viewer.post, site)}
         draggable="false"
       />
     {/if}
@@ -373,6 +376,7 @@
     <div class="grid min-h-0 grid-cols-[300px_minmax(0,1fr)]">
       <OriginalPostSidebar
         post={viewer.post}
+        {site}
         {username}
         {onSearchTag}
         {onOpenAccount}
@@ -401,7 +405,7 @@
               <img
                 class="h-full w-full object-contain"
                 src={viewer.dataUrl}
-                alt={postLabel(viewer.post)}
+                alt={postLabel(viewer.post, site)}
                 draggable="false"
               />
             </button>

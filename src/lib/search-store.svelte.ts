@@ -1,16 +1,15 @@
 import { mediaUrl, searchPosts, thumbnailUrl } from "./e621";
 import { errMsg } from "./errors";
 import { queryWithSort, sortModeFromQuery } from "./search";
+import { basePresetsBySite, type Site } from "./site";
 import { toastStore } from "./toast-store.svelte";
 import type { Post, Preset, SortMode } from "./types";
 
-const basePresets: Preset[] = [
-  { label: "Hot", value: "order:rank" },
-  { label: "Popular Today", value: "date:day order:score" },
-];
+export class SearchStore {
+  readonly site: Site;
+  readonly basePresets: Preset[];
 
-class SearchStore {
-  query = $state(basePresets[0].value);
+  query = $state("");
   status = $state("idle");
   posts = $state<Post[]>([]);
   selectedId = $state<number | null>(null);
@@ -18,13 +17,18 @@ class SearchStore {
   hasSearched = $state(false);
   previews = $state<Record<number, string>>({});
   failedPreviews = $state<Record<number, boolean>>({});
-  activePreset = $state<string | null>(basePresets[0].value);
+  activePreset = $state<string | null>(null);
   sortMode = $state<SortMode>("latest");
   page = $state(1);
   hasNextPage = $state(false);
   private searchGeneration = 0;
 
-  readonly basePresets = basePresets;
+  constructor(site: Site) {
+    this.site = site;
+    this.basePresets = basePresetsBySite[site];
+    this.query = this.basePresets[0].value;
+    this.activePreset = this.basePresets[0].value;
+  }
 
   setQuery(value: string) {
     this.query = value;
@@ -102,7 +106,7 @@ class SearchStore {
     this.hasNextPage = false;
 
     try {
-      const result = await searchPosts(tags, this.page, limit);
+      const result = await searchPosts(this.site, tags, this.page, limit);
       if (generation !== this.searchGeneration) return;
       this.posts = result.posts;
       this.hasNextPage = this.posts.length >= limit;
@@ -143,5 +147,3 @@ class SearchStore {
     }
   }
 }
-
-export const searchStore = new SearchStore();

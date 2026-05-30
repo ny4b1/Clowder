@@ -8,16 +8,14 @@
   import SettingsDialog from "./components/SettingsDialog.svelte";
   import Toasts from "./components/Toasts.svelte";
   import Toolbar from "./components/Toolbar.svelte";
-  import { accountStore } from "./lib/account-store.svelte";
+  import { appStore } from "./lib/app-store.svelte";
   import { downloadStore } from "./lib/download-store.svelte";
   import { isTextInput } from "./lib/keyboard";
-  import { postActionsStore } from "./lib/post-actions-store.svelte";
   import { searchHistoryStore } from "./lib/search-history-store.svelte";
-  import { searchStore } from "./lib/search-store.svelte";
   import { settingsStore } from "./lib/settings-store.svelte";
+  import { siteLabels, type Site } from "./lib/site";
   import { toastStore } from "./lib/toast-store.svelte";
   import { updateStore } from "./lib/update-store.svelte";
-  import { viewerStore } from "./lib/viewer-store.svelte";
   import type { Post, Preset, SettingsSection, SortMode } from "./lib/types";
 
   let showSettings = $state(false);
@@ -29,12 +27,15 @@
   let systemPrefersReducedMotion = $state(false);
 
   let selectedPost = $derived(
-    searchStore.posts.find((post) => post.id === searchStore.selectedId) ?? null,
+    appStore.search.posts.find((post) => post.id === appStore.search.selectedId) ?? null,
   );
   let presets = $derived(
-    accountStore.username
-      ? [...searchStore.basePresets, { label: "Favorites", value: `fav:${accountStore.username}` }]
-      : [...searchStore.basePresets, { label: "Favorites", value: "", requiresAccount: true }],
+    appStore.account.username
+      ? [
+          ...appStore.search.basePresets,
+          { label: "Favorites", value: `fav:${appStore.account.username}` },
+        ]
+      : [...appStore.search.basePresets, { label: "Favorites", value: "", requiresAccount: true }],
   );
 
   // Mirrors PostGrid CSS: p-3 (12px), gap-2 (8px), minmax(var(--clowder-tile-min),1fr), h-16 metadata strip (64px).
@@ -57,13 +58,19 @@
 
   function search(targetPage: number = 1) {
     if (targetPage === 1) {
-      searchHistoryStore.push(searchStore.query);
+      searchHistoryStore.push(appStore.search.query);
     }
-    return searchStore.search(targetPage, computePageSize());
+    return appStore.search.search(targetPage, computePageSize());
+  }
+
+  function switchSite(site: Site) {
+    if (site === appStore.activeSite) return;
+    appStore.viewer.close();
+    appStore.setSite(site);
   }
 
   onMount(() => {
-    void accountStore.load();
+    appStore.loadAccounts();
     void settingsStore.load();
     const updateCheckTimer = window.setTimeout(() => {
       void updateStore.check(true);
@@ -73,11 +80,14 @@
     window.addEventListener("mouseup", onMouseNavButton);
 
     let unlistenAuthExpired: (() => void) | undefined;
-    void listen("auth-expired", () => {
-      accountStore.expire();
-      toastStore.error("Your e621 session expired. Sign in again.");
-      if (searchStore.activePreset?.startsWith("fav:")) {
-        applyPreset(searchStore.basePresets[0]);
+    void listen<Site>("auth-expired", (event) => {
+      const site = event.payload;
+      const ctx = appStore.contextFor(site);
+      ctx.account.expire();
+      toastStore.error(`Your ${siteLabels[site]} session expired. Sign in again.`);
+      if (ctx.search.activePreset?.startsWith("fav:")) {
+        ctx.search.applyPreset(ctx.search.basePresets[0]);
+        if (site === appStore.activeSite) void search();
       }
     }).then((unlisten) => {
       unlistenAuthExpired = unlisten;
@@ -133,8 +143,8 @@
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     if (showSettings || isTextInput(event.target)) return;
     event.preventDefault();
-    const next = searchStore.moveSelection(event.key === "ArrowRight" ? 1 : -1);
-    if (viewerStore.viewer && next) {
+    const next = appStore.search.moveSelection(event.key === "ArrowRight" ? 1 : -1);
+    if (appStore.viewer.viewer && next) {
       openOriginal(next, "replace");
     }
   }
@@ -143,12 +153,12 @@
     const state = event.state as { viewer?: number } | null;
     const viewerId = state?.viewer;
     if (typeof viewerId === "number") {
-      if (viewerStore.viewer?.post.id === viewerId) return;
-      const post = searchStore.postById(viewerId);
+      if (appStore.viewer.viewer?.post.id === viewerId) return;
+      const post = appStore.search.postById(viewerId);
       if (post) {
         openOriginal(post, "skip");
       } else {
-        viewerStore.close(true);
+        appStore.viewer.close(true);
       }
     } else {
       closeTopLayer(true);
@@ -164,11 +174,11 @@
   }
 
   function closeTopLayer(fromHistory = false) {
-    if (viewerStore.imageOnly) {
-      viewerStore.setImageOnly(false);
-    } else if (viewerStore.viewer) {
-      viewerStore.close(fromHistory);
-    } else if (showSettings && !accountStore.saving) {
+    if (appStore.viewer.imageOnly) {
+      appStore.viewer.setImageOnly(false);
+    } else if (appStore.viewer.viewer) {
+      appStore.viewer.close(fromHistory);
+    } else if (showSettings && !appStore.account.saving) {
       closeSettings();
     }
   }
@@ -180,8 +190,8 @@
   }
 
   function goToPage(delta: number) {
-    const next = searchStore.page + delta;
-    if (next < 1 || (delta > 0 && !searchStore.hasNextPage) || searchStore.loading) return;
+    const next = appStore.search.page + delta;
+    if (next < 1 || (delta > 0 && !appStore.search.hasNextPage) || appStore.search.loading) return;
     void search(next);
     document.querySelector("[data-grid-scroll]")?.scrollTo({ top: 0 });
   }
@@ -191,77 +201,77 @@
       openSettings("account");
       return;
     }
-    searchStore.applyPreset(preset);
+    appStore.search.applyPreset(preset);
     void search();
   }
 
   function applySort(value: SortMode) {
-    searchStore.applySort(value);
-    if (searchStore.hasSearched || searchStore.query.trim()) {
+    appStore.search.applySort(value);
+    if (appStore.search.hasSearched || appStore.search.query.trim()) {
       void search();
     }
   }
 
   function searchTag(tag: string) {
-    viewerStore.close();
-    searchStore.setQueryForTag(tag);
+    appStore.viewer.close();
+    appStore.search.setQueryForTag(tag);
     void search();
   }
 
   function openOriginal(post: Post, historyMode: "push" | "replace" | "skip" = "push") {
     downloadStore.reset();
-    void viewerStore.open(post, historyMode);
+    void appStore.viewer.open(post, historyMode);
   }
 
   async function toggleFavorite(post: Post) {
-    if (!accountStore.username) {
+    if (!appStore.account.username) {
       openSettings("account");
       return;
     }
-    const error = await postActionsStore.toggleFavorite(post);
+    const error = await appStore.postActions.toggleFavorite(post);
     if (error) {
       const message = `favorite failed: ${error}`;
-      searchStore.status = message;
+      appStore.search.status = message;
       toastStore.error(message);
     }
   }
 
   async function updateTags(post: Post, tagStringDiff: string, editReason: string) {
-    if (!accountStore.username) {
+    if (!appStore.account.username) {
       openSettings("account");
       return;
     }
-    await postActionsStore.updateTags(post, tagStringDiff, editReason);
+    await appStore.postActions.updateTags(post, tagStringDiff, editReason);
   }
 
   async function submitComment(post: Post) {
-    if (!accountStore.username) {
+    if (!appStore.account.username) {
       openSettings("account");
       return;
     }
-    const newCount = await viewerStore.submitComment(post);
+    const newCount = await appStore.viewer.submitComment(post);
     if (newCount !== null) {
-      searchStore.updatePost(post.id, { comment_count: newCount });
+      appStore.search.updatePost(post.id, { comment_count: newCount });
     }
   }
 
   async function hideOwnComment(commentId: number) {
-    if (!accountStore.username) return;
-    await viewerStore.hideOwnComment(commentId);
+    if (!appStore.account.username) return;
+    await appStore.viewer.hideOwnComment(commentId);
   }
 
   function openSettings(section: SettingsSection = "account") {
-    usernameInput = accountStore.username ?? "";
+    usernameInput = appStore.account.username ?? "";
     apiKeyInput = "";
-    accountStore.status = "";
+    appStore.account.status = "";
     settingsSection = section;
     showSettings = true;
   }
 
   function closeSettings() {
-    if (accountStore.saving) return;
+    if (appStore.account.saving) return;
     showSettings = false;
-    accountStore.status = "";
+    appStore.account.status = "";
   }
 
   async function submitSignIn(event: Event) {
@@ -269,10 +279,10 @@
     const u = usernameInput.trim();
     const k = apiKeyInput.trim();
     if (!u || !k) {
-      accountStore.status = "username and api key are required";
+      appStore.account.status = "username and api key are required";
       return;
     }
-    const ok = await accountStore.signIn(u, k);
+    const ok = await appStore.account.signIn(u, k);
     if (ok) {
       apiKeyInput = "";
       showSettings = false;
@@ -280,12 +290,12 @@
   }
 
   async function signOut() {
-    const ok = await accountStore.signOut();
+    const ok = await appStore.account.signOut();
     if (ok) {
       apiKeyInput = "";
       showSettings = false;
-      if (searchStore.activePreset?.startsWith("fav:")) {
-        applyPreset(searchStore.basePresets[0]);
+      if (appStore.search.activePreset?.startsWith("fav:")) {
+        applyPreset(appStore.search.basePresets[0]);
       }
     }
   }
@@ -297,14 +307,16 @@
 
 <main class="grid h-screen grid-rows-[48px_36px_minmax(0,1fr)] bg-room-bg text-room-text">
   <SearchHeader
-    query={searchStore.query}
-    status={searchStore.status}
-    loading={searchStore.loading}
-    username={accountStore.username}
-    hasSearched={searchStore.hasSearched}
-    page={searchStore.page}
-    hasNextPage={searchStore.hasNextPage}
-    onQueryChange={(value) => searchStore.setQuery(value)}
+    site={appStore.activeSite}
+    query={appStore.search.query}
+    status={appStore.search.status}
+    loading={appStore.search.loading}
+    username={appStore.account.username}
+    hasSearched={appStore.search.hasSearched}
+    page={appStore.search.page}
+    hasNextPage={appStore.search.hasNextPage}
+    onSwitchSite={switchSite}
+    onQueryChange={(value) => appStore.search.setQuery(value)}
     onSearch={() => search()}
     onOpenAccount={() => openSettings("account")}
     onOpenSettings={() => openSettings("downloads")}
@@ -313,8 +325,8 @@
 
   <Toolbar
     {presets}
-    activePreset={searchStore.activePreset}
-    sortMode={searchStore.sortMode}
+    activePreset={appStore.search.activePreset}
+    sortMode={appStore.search.sortMode}
     onApplyPreset={applyPreset}
     onApplySort={applySort}
   />
@@ -322,42 +334,45 @@
   <section class="grid min-h-0 grid-cols-[300px_minmax(0,1fr)]">
     <PostSidebar
       {selectedPost}
-      username={accountStore.username}
-      favoritePending={postActionsStore.favoritePending}
+      site={appStore.activeSite}
+      username={appStore.account.username}
+      favoritePending={appStore.postActions.favoritePending}
       onOpenOriginal={openOriginal}
       onToggleFavorite={toggleFavorite}
     />
     <PostGrid
-      posts={searchStore.posts}
-      loading={searchStore.loading}
-      hasSearched={searchStore.hasSearched}
-      selectedId={searchStore.selectedId}
-      previews={searchStore.previews}
-      failedPreviews={searchStore.failedPreviews}
-      viewerOpen={!!viewerStore.viewer}
-      onSelect={(id) => searchStore.selectId(id)}
+      posts={appStore.search.posts}
+      site={appStore.activeSite}
+      loading={appStore.search.loading}
+      hasSearched={appStore.search.hasSearched}
+      selectedId={appStore.search.selectedId}
+      previews={appStore.search.previews}
+      failedPreviews={appStore.search.failedPreviews}
+      viewerOpen={!!appStore.viewer.viewer}
+      onSelect={(id) => appStore.search.selectId(id)}
       onOpenOriginal={openOriginal}
-      onPreviewError={(id) => searchStore.markPreviewFailed(id)}
+      onPreviewError={(id) => appStore.search.markPreviewFailed(id)}
     />
   </section>
 
-  {#if viewerStore.viewer}
+  {#if appStore.viewer.viewer}
     <OriginalViewer
-      viewer={viewerStore.viewer}
-      imageOnly={viewerStore.imageOnly}
-      username={accountStore.username}
-      favoritePending={postActionsStore.isFavoritePending(viewerStore.viewer.post.id)}
-      downloadPending={downloadStore.isPending(viewerStore.viewer.post.id)}
+      viewer={appStore.viewer.viewer}
+      site={appStore.activeSite}
+      imageOnly={appStore.viewer.imageOnly}
+      username={appStore.account.username}
+      favoritePending={appStore.postActions.isFavoritePending(appStore.viewer.viewer.post.id)}
+      downloadPending={downloadStore.isPending(appStore.viewer.viewer.post.id)}
       downloadStatus={downloadStore.status}
-      comments={viewerStore.comments}
-      onClose={() => viewerStore.close()}
-      onToggleImageOnly={() => viewerStore.toggleImageOnly()}
+      comments={appStore.viewer.comments}
+      onClose={() => appStore.viewer.close()}
+      onToggleImageOnly={() => appStore.viewer.toggleImageOnly()}
       onSearchTag={searchTag}
       onToggleFavorite={toggleFavorite}
       onDownload={(post) => downloadStore.download(post)}
-      onCommentBodyChange={(body) => viewerStore.setCommentBody(body)}
+      onCommentBodyChange={(body) => appStore.viewer.setCommentBody(body)}
       onSubmitComment={submitComment}
-      onRefreshComments={(id) => viewerStore.loadComments(id)}
+      onRefreshComments={(id) => appStore.viewer.loadComments(id)}
       onOpenAccount={() => openSettings("account")}
       onUpdateTags={updateTags}
       onHideComment={hideOwnComment}
@@ -368,12 +383,12 @@
 
   {#if showSettings}
     <SettingsDialog
-      username={accountStore.username}
+      username={appStore.account.username}
       initialSection={settingsSection}
       {usernameInput}
       {apiKeyInput}
-      accountStatus={accountStore.status}
-      accountSaving={accountStore.saving}
+      accountStatus={appStore.account.status}
+      accountSaving={appStore.account.saving}
       onClose={closeSettings}
       {onBackdropClick}
       onSubmit={submitSignIn}

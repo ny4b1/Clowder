@@ -12,7 +12,7 @@ export const FILENAME_TOKENS = [
 
 export function applyFilenameTemplate(template: string, post: Post): string {
   const tokens: Record<string, string> = {
-    artist: post.tags?.artist?.[0] || "unknown_artist",
+    artist: post.tags?.artist?.[0] || post.tags?.director?.[0] || "unknown_artist",
     id: String(post.id),
     ext: post.file?.ext || "jpg",
     score: String(post.score?.total ?? 0),

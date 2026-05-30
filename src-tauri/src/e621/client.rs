@@ -15,20 +15,19 @@ use super::types::{
     Comment, CommentCreateResponse, CommentUpdateResponse, CommentsResponse, Credentials, Post,
     PostUpdateResponse, PostsResponse, Tag, TagsResponse,
 };
+use crate::site::Site;
 
-const HOST: &str = "e621.net";
 const MAX_LIMIT: u32 = 320;
 const MIN_LIMIT: u32 = 8;
-const CREDENTIAL_DOMAINS: &[&str] = &["e621.net", "e926.net"];
 const EMULATION_PROFILE: Emulation = Emulation::Chrome136;
 
 pub const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_MEDIA_RESPONSE_BYTES: u64 = 256 * 1024 * 1024;
 
-pub const SESSION_EXPIRED: &str = "Your e621 session expired. Sign in again.";
+pub const SESSION_EXPIRED: &str = "Your session expired. Sign in again.";
 
-fn host_accepts_credentials(host: &str) -> bool {
-    CREDENTIAL_DOMAINS
+fn host_accepts_credentials(host: &str, domains: &[&str]) -> bool {
+    domains
         .iter()
         .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
@@ -55,13 +54,14 @@ pub struct MediaResponse {
 
 #[derive(Clone)]
 pub struct Client {
+    site: Site,
     http: wreq::Client,
     limiter: Arc<Mutex<Instant>>,
     credentials: Arc<RwLock<Option<Credentials>>>,
 }
 
 impl Client {
-    pub async fn new(proxy_url: Option<&str>) -> Result<Self> {
+    pub async fn new(site: Site, proxy_url: Option<&str>) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
@@ -86,10 +86,19 @@ impl Client {
             .unwrap_or_else(Instant::now);
 
         Ok(Self {
+            site,
             http,
             limiter: Arc::new(Mutex::new(initial_limiter)),
             credentials: Arc::new(RwLock::new(None)),
         })
+    }
+
+    fn host(&self) -> &'static str {
+        self.site.host()
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("https://{}/{path}", self.host())
     }
 
     pub fn set_credentials(&self, creds: Option<Credentials>) {
@@ -143,7 +152,7 @@ impl Client {
 
         let page = page.max(1);
         let limit = limit.clamp(MIN_LIMIT, MAX_LIMIT);
-        let req = self.http.get(format!("https://{HOST}/posts.json")).query(&[
+        let req = self.http.get(self.url("posts.json")).query(&[
             ("tags", tags.trim()),
             ("limit", &limit.to_string()),
             ("page", &page.to_string()),
@@ -200,9 +209,7 @@ impl Client {
 
         let resp = self
             .apply_auth(
-                self.http
-                    .get(format!("https://{HOST}/tags.json"))
-                    .query(&query),
+                self.http.get(self.url("tags.json")).query(&query),
             )
             .send()
             .await
@@ -226,7 +233,7 @@ impl Client {
 
         let resp = self
             .http
-            .get(format!("https://{HOST}/favorites.json"))
+            .get(self.url("favorites.json"))
             .query(&[("limit", "1")])
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
@@ -261,7 +268,7 @@ impl Client {
 
         let resp = self
             .http
-            .post(format!("https://{HOST}/favorites.json"))
+            .post(self.url("favorites.json"))
             .query(&[("post_id", post_id.to_string())])
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
@@ -281,7 +288,7 @@ impl Client {
 
         let resp = self
             .http
-            .delete(format!("https://{HOST}/favorites/{post_id}.json"))
+            .delete(self.url(&format!("favorites/{post_id}.json")))
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
             .await
@@ -316,7 +323,7 @@ impl Client {
 
         let resp = self
             .http
-            .patch(format!("https://{HOST}/posts/{post_id}.json"))
+            .patch(self.url(&format!("posts/{post_id}.json")))
             .form(&form)
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
@@ -342,9 +349,7 @@ impl Client {
         let limit = limit.clamp(1, MAX_LIMIT);
         let resp = self
             .apply_auth(
-                self.http
-                    .get(format!("https://{HOST}/comments.json"))
-                    .query(&[
+                self.http.get(self.url("comments.json")).query(&[
                         ("search[post_id]", post_id.to_string()),
                         ("limit", limit.to_string()),
                         ("group_by", "comment".to_string()),
@@ -378,7 +383,7 @@ impl Client {
 
         let resp = self
             .http
-            .post(format!("https://{HOST}/comments.json"))
+            .post(self.url("comments.json"))
             .form(&[
                 ("comment[post_id]", post_id.to_string()),
                 ("comment[body]", body.to_string()),
@@ -409,7 +414,7 @@ impl Client {
 
         let resp = self
             .http
-            .post(format!("https://{HOST}/comments/{comment_id}/hide.json"))
+            .post(self.url(&format!("comments/{comment_id}/hide.json")))
             .basic_auth(&creds.username, Some(&creds.api_key))
             .send()
             .await
@@ -450,7 +455,7 @@ impl Client {
             .to_string();
 
         let mut req = self.http.get(parsed.as_str());
-        if host_accepts_credentials(&host) {
+        if host_accepts_credentials(&host, self.site.credential_domains()) {
             req = self.apply_auth(req);
         }
 
@@ -495,7 +500,7 @@ impl Client {
         if let Some(range) = range {
             req = req.header(RANGE, range);
         }
-        if host_accepts_credentials(&host) {
+        if host_accepts_credentials(&host, self.site.credential_domains()) {
             req = self.apply_auth(req);
         }
 
@@ -576,25 +581,36 @@ mod tests {
 
     #[test]
     fn host_accepts_credentials_for_e621_apex() {
-        assert!(host_accepts_credentials("e621.net"));
-        assert!(host_accepts_credentials("e926.net"));
+        let domains = Site::E621.credential_domains();
+        assert!(host_accepts_credentials("e621.net", domains));
+        assert!(host_accepts_credentials("e926.net", domains));
     }
 
     #[test]
     fn host_accepts_credentials_for_subdomains() {
-        assert!(host_accepts_credentials("static1.e621.net"));
-        assert!(host_accepts_credentials("static2.e621.net"));
-        assert!(host_accepts_credentials("static1.e926.net"));
-        assert!(host_accepts_credentials("api.e621.net"));
+        let domains = Site::E621.credential_domains();
+        assert!(host_accepts_credentials("static1.e621.net", domains));
+        assert!(host_accepts_credentials("static2.e621.net", domains));
+        assert!(host_accepts_credentials("static1.e926.net", domains));
+        assert!(host_accepts_credentials("api.e621.net", domains));
+    }
+
+    #[test]
+    fn host_accepts_credentials_for_e6ai() {
+        let domains = Site::E6ai.credential_domains();
+        assert!(host_accepts_credentials("e6ai.net", domains));
+        assert!(host_accepts_credentials("static1.e6ai.net", domains));
+        assert!(!host_accepts_credentials("e621.net", domains));
     }
 
     #[test]
     fn host_accepts_credentials_rejects_other_hosts() {
-        assert!(!host_accepts_credentials(""));
-        assert!(!host_accepts_credentials("example.com"));
-        assert!(!host_accepts_credentials("e621.net.evil.com"));
-        assert!(!host_accepts_credentials("notrealle621.net"));
-        assert!(!host_accepts_credentials("e621-net"));
+        let domains = Site::E621.credential_domains();
+        assert!(!host_accepts_credentials("", domains));
+        assert!(!host_accepts_credentials("example.com", domains));
+        assert!(!host_accepts_credentials("e621.net.evil.com", domains));
+        assert!(!host_accepts_credentials("notrealle621.net", domains));
+        assert!(!host_accepts_credentials("e621-net", domains));
     }
 
     #[test]
