@@ -6,10 +6,6 @@ export const SITES: readonly Site[] = ["e621", "e6ai"];
 
 export const DEFAULT_SITE: Site = "e621";
 
-export function isSite(value: unknown): value is Site {
-  return value === "e621" || value === "e6ai";
-}
-
 export const siteLabels: Record<Site, string> = {
   e621: "e621",
   e6ai: "e6ai",
