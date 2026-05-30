@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use e621::{Client, Comment, Credentials, MAX_DOWNLOAD_BYTES, Post, Tag};
+use e621::{Client, Comment, Credentials, MAX_DOWNLOAD_BYTES, Post, SESSION_EXPIRED, Tag};
 use serde::Serialize;
 use settings::Settings;
 use tauri::http::{
@@ -21,7 +21,7 @@ use tauri::http::{
         CONTENT_RANGE, CONTENT_TYPE, RANGE,
     },
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 const ALLOWED_MEDIA_HOSTS: &[&str] = &[
@@ -78,6 +78,43 @@ fn report(operation: &'static str, fallback: &'static str, err: anyhow::Error) -
     }
 }
 
+const VPN_TUNNEL_HINT: &str = "Couldn't reach e621 through the VPN tunnel. If a system-wide VPN (like the Mullvad app) is also connected, turn one off — running two VPNs at once breaks the connection.";
+
+fn is_transport_error(chain: &str) -> bool {
+    chain.contains("send") && !chain.contains("HTTP")
+}
+
+fn finish<T>(
+    app: &tauri::AppHandle,
+    vpn_live: bool,
+    operation: &'static str,
+    fallback: &'static str,
+    result: anyhow::Result<T>,
+) -> Result<T, String> {
+    let err = match result {
+        Ok(value) => return Ok(value),
+        Err(err) => err,
+    };
+    let chain = format!("{err:#}");
+    if chain.contains(SESSION_EXPIRED) {
+        if let Err(clear_err) = credentials::clear() {
+            tracing::warn!(error = %format!("{clear_err:#}"), "clear credentials on session expiry failed");
+        }
+        let _ = app.emit("auth-expired", ());
+        tracing::info!(operation, "e621 session expired; signed out");
+        return Err(SESSION_EXPIRED.to_string());
+    }
+    if vpn_live && is_transport_error(&chain) {
+        tracing::error!(operation, error = %chain, "command failed through vpn tunnel");
+        return Err(VPN_TUNNEL_HINT.to_string());
+    }
+    Err(report(operation, fallback, err))
+}
+
+async fn vpn_live(state: &State<'_, Arc<AppState>>) -> bool {
+    state.vpn.lock().await.is_some()
+}
+
 struct AppState {
     client: Mutex<Option<Client>>,
     settings: RwLock<Settings>,
@@ -104,6 +141,7 @@ struct VpnStatus {
     proxy_url: Option<String>,
     provider: Option<String>,
     account: Option<String>,
+    device: Option<String>,
     country: Option<String>,
     country_code: Option<String>,
     city: Option<String>,
@@ -114,6 +152,7 @@ struct VpnStatus {
 struct MullvadDisplay {
     provider: Option<String>,
     account: Option<String>,
+    device: Option<String>,
     country: Option<String>,
     country_code: Option<String>,
     city: Option<String>,
@@ -134,13 +173,18 @@ struct AccountResponse {
 async fn autocomplete_tags(
     term: String,
     category: Option<u8>,
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Tag>, String> {
     let client = get_client(&state).await?;
-    client
-        .autocomplete_tags(&term, category)
-        .await
-        .map_err(|err| report("autocomplete_tags", "Tag autocomplete failed.", err))
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "autocomplete_tags",
+        "Tag autocomplete failed.",
+        client.autocomplete_tags(&term, category).await,
+    )
 }
 
 #[tauri::command]
@@ -148,13 +192,18 @@ async fn search_posts(
     tags: String,
     page: u32,
     limit: u32,
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SearchResponse, String> {
     let client = get_client(&state).await?;
-    let outcome = client
-        .search(&tags, page, limit)
-        .await
-        .map_err(|err| report("search_posts", "Search failed. Please try again.", err))?;
+    let live = vpn_live(&state).await;
+    let outcome = finish(
+        &app,
+        live,
+        "search_posts",
+        "Search failed. Please try again.",
+        client.search(&tags, page, limit).await,
+    )?;
     Ok(SearchResponse {
         posts: outcome.posts,
     })
@@ -210,6 +259,7 @@ async fn get_account(state: State<'_, Arc<AppState>>) -> Result<AccountResponse,
 async fn sign_in(
     username: String,
     api_key: String,
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<AccountResponse, String> {
     let username = username.trim().to_string();
@@ -220,10 +270,14 @@ async fn sign_in(
 
     let creds = Credentials { username, api_key };
     let client = get_client(&state).await?;
-    client
-        .validate(&creds)
-        .await
-        .map_err(|err| report("sign_in", "Sign in failed.", err))?;
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "sign_in",
+        "Sign in failed.",
+        client.validate(&creds).await,
+    )?;
 
     credentials::save(&creds)
         .map_err(|err| report("credentials_save", "Could not save credentials.", err))?;
@@ -244,22 +298,38 @@ async fn sign_out(state: State<'_, Arc<AppState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn favorite_post(post_id: u64, state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+async fn favorite_post(
+    post_id: u64,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool, String> {
     let client = get_client(&state).await?;
-    client
-        .favorite(post_id)
-        .await
-        .map_err(|err| report("favorite_post", "Favorite failed.", err))?;
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "favorite_post",
+        "Favorite failed.",
+        client.favorite(post_id).await,
+    )?;
     Ok(true)
 }
 
 #[tauri::command]
-async fn unfavorite_post(post_id: u64, state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+async fn unfavorite_post(
+    post_id: u64,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool, String> {
     let client = get_client(&state).await?;
-    client
-        .unfavorite(post_id)
-        .await
-        .map_err(|err| report("unfavorite_post", "Unfavorite failed.", err))?;
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "unfavorite_post",
+        "Unfavorite failed.",
+        client.unfavorite(post_id).await,
+    )?;
     Ok(false)
 }
 
@@ -267,26 +337,36 @@ async fn unfavorite_post(post_id: u64, state: State<'_, Arc<AppState>>) -> Resul
 async fn fetch_comments(
     post_id: u64,
     limit: u32,
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Comment>, String> {
     let client = get_client(&state).await?;
-    client
-        .comments(post_id, limit)
-        .await
-        .map_err(|err| report("fetch_comments", "Could not load comments.", err))
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "fetch_comments",
+        "Could not load comments.",
+        client.comments(post_id, limit).await,
+    )
 }
 
 #[tauri::command]
 async fn create_comment(
     post_id: u64,
     body: String,
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Comment, String> {
     let client = get_client(&state).await?;
-    client
-        .create_comment(post_id, &body)
-        .await
-        .map_err(|err| report("create_comment", "Failed to post comment.", err))
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "create_comment",
+        "Failed to post comment.",
+        client.create_comment(post_id, &body).await,
+    )
 }
 
 #[tauri::command]
@@ -294,22 +374,37 @@ async fn update_post_tags(
     post_id: u64,
     tag_string_diff: String,
     edit_reason: String,
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Post, String> {
     let client = get_client(&state).await?;
-    client
-        .update_post_tags(post_id, &tag_string_diff, &edit_reason)
-        .await
-        .map_err(|err| report("update_post_tags", "Failed to update tags.", err))
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "update_post_tags",
+        "Failed to update tags.",
+        client
+            .update_post_tags(post_id, &tag_string_diff, &edit_reason)
+            .await,
+    )
 }
 
 #[tauri::command]
-async fn hide_comment(comment_id: u64, state: State<'_, Arc<AppState>>) -> Result<Comment, String> {
+async fn hide_comment(
+    comment_id: u64,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Comment, String> {
     let client = get_client(&state).await?;
-    client
-        .hide_comment(comment_id)
-        .await
-        .map_err(|err| report("hide_comment", "Failed to hide comment.", err))
+    let live = vpn_live(&state).await;
+    finish(
+        &app,
+        live,
+        "hide_comment",
+        "Failed to hide comment.",
+        client.hide_comment(comment_id).await,
+    )
 }
 
 #[tauri::command]
@@ -598,13 +693,13 @@ fn derive_public(private_key: &str) -> Option<String> {
 async fn read_status(state: &State<'_, Arc<AppState>>) -> Result<VpnStatus, String> {
     let stored = vpn::storage::load().map_err(|err| report_chain("vpn_status", err))?;
     let mullvad = vpn::storage::load_mullvad().map_err(|err| report_chain("vpn_status", err))?;
-    let enabled = state.settings.read().expect("settings lock").vpn.enabled;
     let vpn_guard = state.vpn.lock().await;
 
     let status = match &mullvad {
         Some(profile) => MullvadDisplay {
             provider: Some("mullvad".to_string()),
             account: Some(vpn::mullvad::mask_account(&profile.account_number)),
+            device: Some(profile.device_name.clone()),
             country: Some(profile.country_name.clone()),
             country_code: Some(profile.country_code.clone()),
             city: Some(profile.city_name.clone()),
@@ -619,11 +714,12 @@ async fn read_status(state: &State<'_, Arc<AppState>>) -> Result<VpnStatus, Stri
 
     Ok(VpnStatus {
         configured: stored.is_some(),
-        enabled,
+        enabled: vpn_guard.is_some(),
         endpoint: stored.as_ref().map(|c| c.peer.endpoint.clone()),
         proxy_url: vpn_guard.as_ref().and_then(|h| h.proxy_display_url()),
         provider: status.provider,
         account: status.account,
+        device: status.device,
         country: status.country,
         country_code: status.country_code,
         city: status.city,

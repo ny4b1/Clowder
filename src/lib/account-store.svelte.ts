@@ -31,6 +31,11 @@ class AccountStore {
     }
   }
 
+  expire() {
+    this.username = null;
+    this.status = "";
+  }
+
   async signOut(): Promise<boolean> {
     this.saving = true;
     this.status = "";

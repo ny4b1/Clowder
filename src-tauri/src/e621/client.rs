@@ -25,6 +25,8 @@ const EMULATION_PROFILE: Emulation = Emulation::Chrome136;
 pub const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_MEDIA_RESPONSE_BYTES: u64 = 256 * 1024 * 1024;
 
+pub const SESSION_EXPIRED: &str = "Your e621 session expired. Sign in again.";
+
 fn host_accepts_credentials(host: &str) -> bool {
     CREDENTIAL_DOMAINS
         .iter()
@@ -118,6 +120,24 @@ impl Client {
             .ok_or_else(|| anyhow!("login required to {action}"))
     }
 
+    fn auth_expired(&self, status: u16) -> Option<anyhow::Error> {
+        if status == 401 && self.auth().is_some() {
+            self.set_credentials(None);
+            Some(anyhow!(SESSION_EXPIRED))
+        } else {
+            None
+        }
+    }
+
+    async fn fail(&self, resp: wreq::Response, action: &'static str) -> anyhow::Error {
+        if let Some(err) = self.auth_expired(resp.status().as_u16()) {
+            return err;
+        }
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow!("{action} failed: HTTP {status} {}", trim_body(&body))
+    }
+
     pub async fn search(&self, tags: &str, page: u32, limit: u32) -> Result<SearchOutcome> {
         self.wait_for_api_slot().await;
 
@@ -137,6 +157,9 @@ impl Client {
 
         let status = resp.status();
         if !status.is_success() {
+            if let Some(err) = self.auth_expired(status.as_u16()) {
+                return Err(err);
+            }
             let body = resp.text().await.unwrap_or_default();
             if status.as_u16() == 403 && is_cloudflare_challenge(&body) {
                 return Err(anyhow!(
@@ -186,7 +209,7 @@ impl Client {
             .context("send tag autocomplete request")?;
 
         if !resp.status().is_success() {
-            return Err(fail_with_body(resp, "tag autocomplete").await);
+            return Err(self.fail(resp, "tag autocomplete").await);
         }
 
         match resp
@@ -249,7 +272,7 @@ impl Client {
         if status.is_success() || status.as_u16() == 422 {
             return Ok(());
         }
-        Err(fail_with_body(resp, "favorite").await)
+        Err(self.fail(resp, "favorite").await)
     }
 
     pub async fn unfavorite(&self, post_id: u64) -> Result<()> {
@@ -268,7 +291,7 @@ impl Client {
         if status.is_success() || status.as_u16() == 404 {
             return Ok(());
         }
-        Err(fail_with_body(resp, "unfavorite").await)
+        Err(self.fail(resp, "unfavorite").await)
     }
 
     pub async fn update_post_tags(
@@ -301,7 +324,7 @@ impl Client {
             .context("send post tag update request")?;
 
         if !resp.status().is_success() {
-            return Err(fail_with_body(resp, "tag update").await);
+            return Err(self.fail(resp, "tag update").await);
         }
 
         match resp
@@ -332,7 +355,7 @@ impl Client {
             .context("send comments request")?;
 
         if !resp.status().is_success() {
-            return Err(fail_with_body(resp, "comments").await);
+            return Err(self.fail(resp, "comments").await);
         }
 
         match resp
@@ -366,7 +389,7 @@ impl Client {
             .context("send create comment request")?;
 
         if !resp.status().is_success() {
-            return Err(fail_with_body(resp, "comment").await);
+            return Err(self.fail(resp, "comment").await);
         }
 
         match resp
@@ -393,7 +416,7 @@ impl Client {
             .context("send hide comment request")?;
 
         if !resp.status().is_success() {
-            return Err(fail_with_body(resp, "hide comment").await);
+            return Err(self.fail(resp, "hide comment").await);
         }
 
         let body = resp.text().await.context("read hidden comment response")?;
@@ -545,12 +568,6 @@ fn trim_body(body: &str) -> String {
         out.push_str("...");
     }
     out
-}
-
-async fn fail_with_body(resp: wreq::Response, action: &str) -> anyhow::Error {
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    anyhow!("{action} failed: HTTP {status} {}", trim_body(&body))
 }
 
 #[cfg(test)]

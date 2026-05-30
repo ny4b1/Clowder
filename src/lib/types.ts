@@ -127,6 +127,7 @@ export type VpnStatus = {
   proxy_url: string | null;
   provider: VpnProvider | null;
   account: string | null;
+  device: string | null;
   country: string | null;
   country_code: string | null;
   city: string | null;

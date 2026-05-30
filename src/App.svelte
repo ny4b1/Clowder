@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import OriginalViewer from "./components/OriginalViewer.svelte";
   import PostGrid from "./components/PostGrid.svelte";
   import PostSidebar from "./components/PostSidebar.svelte";
@@ -71,6 +72,17 @@
     window.addEventListener("popstate", onPopState);
     window.addEventListener("mouseup", onMouseNavButton);
 
+    let unlistenAuthExpired: (() => void) | undefined;
+    void listen("auth-expired", () => {
+      accountStore.expire();
+      toastStore.error("Your e621 session expired. Sign in again.");
+      if (searchStore.activePreset?.startsWith("fav:")) {
+        applyPreset(searchStore.basePresets[0]);
+      }
+    }).then((unlisten) => {
+      unlistenAuthExpired = unlisten;
+    });
+
     const lightMq = window.matchMedia("(prefers-color-scheme: light)");
     const motionMq = window.matchMedia("(prefers-reduced-motion: reduce)");
     systemPrefersLight = lightMq.matches;
@@ -87,6 +99,7 @@
       window.removeEventListener("mouseup", onMouseNavButton);
       lightMq.removeEventListener("change", onLight);
       motionMq.removeEventListener("change", onMotion);
+      unlistenAuthExpired?.();
     };
   });
 

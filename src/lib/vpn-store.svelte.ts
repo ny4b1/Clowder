@@ -19,6 +19,7 @@ const EMPTY_STATUS: VpnStatus = {
   proxy_url: null,
   provider: null,
   account: null,
+  device: null,
   country: null,
   country_code: null,
   city: null,

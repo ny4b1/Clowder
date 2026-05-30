@@ -156,9 +156,16 @@
 
   {#if isMullvad}
     <div class="space-y-3 border-t border-room-line pt-4">
-      <p class="font-mono text-[10.5px] leading-relaxed text-room-text-low">
-        Mullvad account <span class="text-room-text-mid">{status.account}</span>
-      </p>
+      <div class="space-y-0.5">
+        <p class="font-mono text-[10.5px] leading-relaxed text-room-text-low">
+          Mullvad account <span class="text-room-text-mid">{status.account}</span>
+        </p>
+        {#if status.device}
+          <p class="font-mono text-[10.5px] leading-relaxed text-room-text-low">
+            device <span class="text-room-text-mid">{status.device}</span>
+          </p>
+        {/if}
+      </div>
       <div class="space-y-2">
         <div class="font-mono text-[10px] uppercase tracking-[0.22em] text-room-text-low">
           server
