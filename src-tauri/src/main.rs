@@ -82,6 +82,7 @@ struct AppState {
     client: Mutex<Option<Client>>,
     settings: RwLock<Settings>,
     vpn: Mutex<Option<vpn::VpnHandle>>,
+    mullvad_relays: Mutex<Option<vpn::mullvad::RelayList>>,
 }
 
 impl AppState {
@@ -90,6 +91,7 @@ impl AppState {
             client: Mutex::new(None),
             settings: RwLock::new(settings),
             vpn: Mutex::new(None),
+            mullvad_relays: Mutex::new(None),
         }
     }
 }
@@ -100,6 +102,22 @@ struct VpnStatus {
     enabled: bool,
     endpoint: Option<String>,
     proxy_url: Option<String>,
+    provider: Option<String>,
+    account: Option<String>,
+    country: Option<String>,
+    country_code: Option<String>,
+    city: Option<String>,
+    city_code: Option<String>,
+}
+
+#[derive(Default)]
+struct MullvadDisplay {
+    provider: Option<String>,
+    account: Option<String>,
+    country: Option<String>,
+    country_code: Option<String>,
+    city: Option<String>,
+    city_code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -343,6 +361,12 @@ async fn enable_vpn(
         .map_err(|err| report_chain("vpn_load", err))?
         .ok_or_else(|| "import a VPN config first".to_string())?;
 
+    swap_tunnel(&state, cfg).await?;
+    persist_vpn_enabled(&app, &state, true)?;
+    read_status(&state).await
+}
+
+async fn swap_tunnel(state: &State<'_, Arc<AppState>>, cfg: vpn::WgConfig) -> Result<(), String> {
     let prev = state.vpn.lock().await.take();
     if let Some(prev) = prev {
         prev.shutdown().await;
@@ -353,9 +377,15 @@ async fn enable_vpn(
         .map_err(|err| report_chain("vpn_start", err))?;
     *state.vpn.lock().await = Some(handle);
     *state.client.lock().await = None;
+    Ok(())
+}
 
-    persist_vpn_enabled(&app, &state, true)?;
-    read_status(&state).await
+async fn stop_tunnel(state: &State<'_, Arc<AppState>>) {
+    let prev = state.vpn.lock().await.take();
+    if let Some(prev) = prev {
+        prev.shutdown().await;
+    }
+    *state.client.lock().await = None;
 }
 
 #[tauri::command]
@@ -363,11 +393,7 @@ async fn disable_vpn(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<VpnStatus, String> {
-    let prev = state.vpn.lock().await.take();
-    if let Some(prev) = prev {
-        prev.shutdown().await;
-    }
-    *state.client.lock().await = None;
+    stop_tunnel(&state).await;
     persist_vpn_enabled(&app, &state, false)?;
     read_status(&state).await
 }
@@ -377,12 +403,11 @@ async fn clear_vpn_config(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<VpnStatus, String> {
-    let prev = state.vpn.lock().await.take();
-    if let Some(prev) = prev {
-        prev.shutdown().await;
-    }
-    *state.client.lock().await = None;
+    stop_tunnel(&state).await;
+    deregister_mullvad_device().await;
+    vpn::storage::clear_mullvad().map_err(|err| report_chain("vpn_clear", err))?;
     vpn::storage::clear().map_err(|err| report_chain("vpn_clear", err))?;
+    *state.mullvad_relays.lock().await = None;
     persist_vpn_enabled(&app, &state, false)?;
     read_status(&state).await
 }
@@ -392,15 +417,217 @@ async fn get_vpn_status(state: State<'_, Arc<AppState>>) -> Result<VpnStatus, St
     read_status(&state).await
 }
 
+#[tauri::command]
+async fn mullvad_sign_in(
+    account: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<VpnStatus, String> {
+    let account = vpn::mullvad::normalize_account(&account)
+        .map_err(|err| report_chain("mullvad_account", err))?;
+
+    let token = vpn::mullvad::fetch_token(&account)
+        .await
+        .map_err(|err| report_chain("mullvad_token", err))?;
+
+    let existing = vpn::storage::load_mullvad().map_err(|err| report_chain("mullvad_load", err))?;
+    let reusable = match existing {
+        Some(profile) if profile.account_number == account => {
+            match derive_public(&profile.private_key) {
+                Some(public_key) => {
+                    vpn::mullvad::device_exists(&token, &profile.device_id, &public_key)
+                        .await
+                        .unwrap_or(false)
+                        .then_some(profile)
+                }
+                None => None,
+            }
+        }
+        _ => None,
+    };
+
+    let (private_key, device_id, device_name, addresses) = match reusable {
+        Some(profile) => (
+            profile.private_key,
+            profile.device_id,
+            profile.device_name,
+            profile.addresses,
+        ),
+        None => {
+            let (private_key, public_key) = vpn::mullvad::generate_keypair();
+            let device = vpn::mullvad::register_device(&token, &public_key)
+                .await
+                .map_err(|err| report_chain("mullvad_register", err))?;
+            (private_key, device.id, device.name, device.addresses)
+        }
+    };
+
+    let relays = vpn::mullvad::fetch_relays()
+        .await
+        .map_err(|err| report_chain("mullvad_relays", err))?;
+    let chosen = relays
+        .default_choice()
+        .ok_or_else(|| "Mullvad returned no usable servers".to_string())?;
+
+    let profile = vpn::mullvad::MullvadProfile {
+        account_number: account,
+        private_key,
+        device_id,
+        device_name,
+        addresses,
+        country_code: chosen.country_code.clone(),
+        country_name: chosen.country_name.clone(),
+        city_code: chosen.city_code.clone(),
+        city_name: chosen.city_name.clone(),
+    };
+
+    let cfg = vpn::mullvad::build_config(&profile, &chosen)
+        .map_err(|err| report_chain("mullvad_config", err))?;
+    vpn::storage::save(&cfg).map_err(|err| report_chain("mullvad_save", err))?;
+    vpn::storage::save_mullvad(&profile).map_err(|err| report_chain("mullvad_save", err))?;
+    *state.mullvad_relays.lock().await = Some(relays);
+
+    if state.vpn.lock().await.is_some() {
+        swap_tunnel(&state, cfg).await?;
+    }
+
+    read_status(&state).await
+}
+
+#[tauri::command]
+async fn mullvad_locations(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<vpn::mullvad::MullvadCountry>, String> {
+    let cached = state.mullvad_relays.lock().await.clone();
+    let relays = match cached {
+        Some(relays) => relays,
+        None => {
+            let relays = vpn::mullvad::fetch_relays()
+                .await
+                .map_err(|err| report_chain("mullvad_relays", err))?;
+            *state.mullvad_relays.lock().await = Some(relays.clone());
+            relays
+        }
+    };
+    Ok(relays.locations_tree())
+}
+
+#[tauri::command]
+async fn mullvad_select_relay(
+    city_code: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<VpnStatus, String> {
+    let mut profile = vpn::storage::load_mullvad()
+        .map_err(|err| report_chain("mullvad_load", err))?
+        .ok_or_else(|| "sign in to Mullvad first".to_string())?;
+
+    let cached = state.mullvad_relays.lock().await.clone();
+    let relays = match cached {
+        Some(relays) => relays,
+        None => {
+            let relays = vpn::mullvad::fetch_relays()
+                .await
+                .map_err(|err| report_chain("mullvad_relays", err))?;
+            *state.mullvad_relays.lock().await = Some(relays.clone());
+            relays
+        }
+    };
+
+    let chosen = relays
+        .choose(&city_code)
+        .ok_or_else(|| "that Mullvad location is no longer available".to_string())?;
+
+    profile.country_code = chosen.country_code.clone();
+    profile.country_name = chosen.country_name.clone();
+    profile.city_code = chosen.city_code.clone();
+    profile.city_name = chosen.city_name.clone();
+
+    let cfg = vpn::mullvad::build_config(&profile, &chosen)
+        .map_err(|err| report_chain("mullvad_config", err))?;
+    vpn::storage::save(&cfg).map_err(|err| report_chain("mullvad_save", err))?;
+    vpn::storage::save_mullvad(&profile).map_err(|err| report_chain("mullvad_save", err))?;
+
+    if state.vpn.lock().await.is_some() {
+        swap_tunnel(&state, cfg).await?;
+    }
+
+    read_status(&state).await
+}
+
+#[tauri::command]
+async fn mullvad_sign_out(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<VpnStatus, String> {
+    stop_tunnel(&state).await;
+    deregister_mullvad_device().await;
+    vpn::storage::clear_mullvad().map_err(|err| report_chain("mullvad_clear", err))?;
+    vpn::storage::clear().map_err(|err| report_chain("mullvad_clear", err))?;
+    *state.mullvad_relays.lock().await = None;
+    persist_vpn_enabled(&app, &state, false)?;
+    read_status(&state).await
+}
+
+async fn deregister_mullvad_device() {
+    let profile = match vpn::storage::load_mullvad() {
+        Ok(Some(profile)) => profile,
+        _ => return,
+    };
+    match vpn::mullvad::fetch_token(&profile.account_number).await {
+        Ok(token) => {
+            if let Err(err) = vpn::mullvad::delete_device(&token, &profile.device_id).await {
+                tracing::warn!(error = %format!("{err:#}"), "mullvad device removal failed");
+            }
+        }
+        Err(err) => {
+            tracing::warn!(error = %format!("{err:#}"), "mullvad sign-out token failed");
+        }
+    }
+}
+
+fn derive_public(private_key: &str) -> Option<String> {
+    use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+    use boringtun::x25519::{PublicKey, StaticSecret};
+
+    let decoded = BASE64.decode(private_key.trim()).ok()?;
+    let bytes: [u8; 32] = decoded.try_into().ok()?;
+    let secret = StaticSecret::from(bytes);
+    let public = PublicKey::from(&secret);
+    Some(BASE64.encode(public.to_bytes()))
+}
+
 async fn read_status(state: &State<'_, Arc<AppState>>) -> Result<VpnStatus, String> {
     let stored = vpn::storage::load().map_err(|err| report_chain("vpn_status", err))?;
+    let mullvad = vpn::storage::load_mullvad().map_err(|err| report_chain("vpn_status", err))?;
     let enabled = state.settings.read().expect("settings lock").vpn.enabled;
     let vpn_guard = state.vpn.lock().await;
+
+    let status = match &mullvad {
+        Some(profile) => MullvadDisplay {
+            provider: Some("mullvad".to_string()),
+            account: Some(vpn::mullvad::mask_account(&profile.account_number)),
+            country: Some(profile.country_name.clone()),
+            country_code: Some(profile.country_code.clone()),
+            city: Some(profile.city_name.clone()),
+            city_code: Some(profile.city_code.clone()),
+        },
+        None if stored.is_some() => MullvadDisplay {
+            provider: Some("manual".to_string()),
+            ..MullvadDisplay::default()
+        },
+        None => MullvadDisplay::default(),
+    };
+
     Ok(VpnStatus {
         configured: stored.is_some(),
         enabled,
         endpoint: stored.as_ref().map(|c| c.peer.endpoint.clone()),
         proxy_url: vpn_guard.as_ref().and_then(|h| h.proxy_display_url()),
+        provider: status.provider,
+        account: status.account,
+        country: status.country,
+        country_code: status.country_code,
+        city: status.city,
+        city_code: status.city_code,
     })
 }
 
@@ -962,7 +1189,11 @@ fn main() {
             enable_vpn,
             disable_vpn,
             clear_vpn_config,
-            get_vpn_status
+            get_vpn_status,
+            mullvad_sign_in,
+            mullvad_locations,
+            mullvad_select_relay,
+            mullvad_sign_out
         ])
         .run(tauri::generate_context!())
         .expect("run tauri app");

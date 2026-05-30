@@ -118,11 +118,30 @@ export type VpnSettings = {
   enabled: boolean;
 };
 
+export type VpnProvider = "manual" | "mullvad";
+
 export type VpnStatus = {
   configured: boolean;
   enabled: boolean;
   endpoint: string | null;
   proxy_url: string | null;
+  provider: VpnProvider | null;
+  account: string | null;
+  country: string | null;
+  country_code: string | null;
+  city: string | null;
+  city_code: string | null;
+};
+
+export type MullvadCity = {
+  code: string;
+  name: string;
+};
+
+export type MullvadCountry = {
+  code: string;
+  name: string;
+  cities: MullvadCity[];
 };
 
 export type Settings = {

@@ -16,8 +16,9 @@ account credentials stay in your computer's secure password store.
 - Full-resolution viewer for images, GIFs, and videos
 - Sign in with your e621 account to favorite, comment, and edit tags
 - One-click downloads with a customizable filename
-- Per-app WireGuard VPN to bypass regional blocks — only Clowder's
-  traffic is tunneled, no system-wide changes, no admin required
+- Per-app VPN to bypass regional blocks — sign in with just a Mullvad
+  account number (or import any WireGuard config); only Clowder's traffic
+  is tunneled, no system-wide changes, no admin required
 - Keyboard shortcuts throughout
 - Light and dark themes
 
@@ -36,16 +37,31 @@ If e621 is blocked in your country, Clowder can route **its own traffic
 only** through a WireGuard peer — the rest of your system keeps using
 your normal connection.
 
-1. Export a WireGuard config (`.conf`) from your VPN provider.
-   Mullvad and Proton both work; pick a server in a country where e621
-   is reachable.
-2. Open **Settings → VPN → Import WireGuard config** and pick the file.
+**With a Mullvad account (easiest):**
+
+1. Open **Settings → VPN** and enter your 16-digit Mullvad account number,
+   then hit **Sign in**.
+2. Pick a country and city where e621 is reachable from the dropdowns.
 3. Hit **Connect**. The tunnel auto-starts on subsequent launches.
 
-The private key is stored in your OS keychain (Keychain on macOS,
-Credential Manager on Windows, Secret Service on Linux). DNS is
-resolved inside the tunnel to prevent leaks. Note that hostnames are
-resolved over IPv4 (A records) only.
+Clowder generates a WireGuard key, registers it as a device on your
+account, and picks a server for you. Mullvad accounts allow up to 5
+devices; **Sign out** removes Clowder's device again.
+
+**With any other provider:**
+
+Under **Settings → VPN → use a custom WireGuard config**, import a `.conf`
+file exported from your provider (Proton, IVPN, a self-hosted peer, …).
+
+> ⚠️ **Don't run a system-wide VPN at the same time.** If your OS-level
+> Mullvad/WireGuard app (or another full-tunnel VPN) is connected,
+> Clowder's tunnel gets nested inside it and the connection breaks —
+> sign-in and browsing will fail. Use one or the other, not both.
+
+Your account number and private key are stored in your OS keychain
+(Keychain on macOS, Credential Manager on Windows, Secret Service on
+Linux). DNS is resolved inside the tunnel to prevent leaks. Note that
+hostnames are resolved over IPv4 (A records) only.
 
 ## Usage
 
